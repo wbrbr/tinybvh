@@ -6,6 +6,7 @@ A Bounding Volume Hierarchy is a data structure used to quickly find intersectio
 
 # How To Use
 The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look at tiny_bvh_test.cpp for an example. A Visual Studio project is included. There is no CMake file but the example consists of only a single source file, which can be compiled with clang or g++:
+
 ````g++ -std=c++20 -mavx tiny_bvh_test.cpp -o tiny_bvh_test````
 
 # Version
