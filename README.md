@@ -16,6 +16,7 @@ The current version of the library is a 'prototype'; please expect changes to th
 * OpenCL traversal example
 * 'Compressed Wide BVH' data structure (CWBVH)
 * Efficient CWBVH GPU traversl
+  
 These features have already been completed but need polishing and adapting to the interface. CWBVH GPU traversal combined with an optimized SBVH provides state-of-the-art #RTXOff performance; expect billions of rays per second.
 
 # Contact
