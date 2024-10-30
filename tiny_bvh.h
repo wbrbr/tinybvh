@@ -235,7 +235,7 @@ struct Ray
 		hit.t = t;
 	}
 	bvhvec3 O, D, rD;
-	Intersection hit; // total ray size: 64 bytes
+	Intersection hit;
 };
 
 class BVH
