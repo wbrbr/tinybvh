@@ -60,7 +60,9 @@ THE SOFTWARE.
 #define BVHBINS 8
 
 // include fast AVX BVH builder
+#if defined(__x86_64__) || defined(_M_X64)
 #define BVH_USEAVX
+#endif
 
 // ============================================================================
 //
@@ -77,15 +79,22 @@ THE SOFTWARE.
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( x ), 64 ) )
 #define ALIGNED_FREE( x ) _aligned_free( x )
 #else
-// gcc
+// gcc / clang
 #include <cstdlib>
 #include <cmath>
-#include <xmmintrin.h>
+
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
+
+#if defined(__x86_64__) || defined(_M_X64)
+// https://stackoverflow.com/questions/32612881/why-use-mm-malloc-as-opposed-to-aligned-malloc-alligned-alloc-or-posix-mem
+#include <xmmintrin.h>
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
 #define ALIGNED_FREE( x ) _mm_free( x )
-// TODO: Intel, Posix; see: 
-// https://stackoverflow.com/questions/32612881/why-use-mm-malloc-as-opposed-to-aligned-malloc-alligned-alloc-or-posix-mem
+#else
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, ( x ) ) )
+#define ALIGNED_FREE( x ) free( x )
+#endif
+
 #endif
 
 namespace tinybvh {
@@ -311,6 +320,8 @@ public:
 	BVHNode* bvhNode = 0;			// BVH node pool. Root is always in node 0.
 };
 
+} // namespace tinybvh {
+
 // ============================================================================
 //
 //        I M P L E M E N T A T I O N
@@ -321,7 +332,11 @@ public:
 
 #include <assert.h>			// for assert
 #include <string.h>			// for memset
+#ifdef BVH_USEAVX
 #include "immintrin.h"		// for __m256
+#endif
+
+namespace tinybvh {
 
 // Basic single-function binned-SAH-builder. 
 // This is the reference builder; it yields a decent tree suitable for ray 
