@@ -80,6 +80,7 @@ THE SOFTWARE.
 // gcc
 #include <cstdlib>
 #include <cmath>
+#include <xmmintrin.h>
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
 #define ALIGNED_FREE( x ) _mm_free( x )
