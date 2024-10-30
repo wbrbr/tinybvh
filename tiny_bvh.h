@@ -22,7 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-// version 0.0.1 : Establishing interface.
+// Oct 30, '24: version 0.1.0 : Initial release.
+// Oct 29, '24: version 0.0.1 : Establishing interface.
 //
 
 //
@@ -31,9 +32,20 @@ THE SOFTWARE.
 //   #include "tiny_bvh.h"
 //
 
-// References:
-// - How to build a BVH series:
-//   https://jacco.ompf2.com/2022/04/13/how-to-build-a-bvh-part-1-basics/
+// How to use:
+// See tiny_bvh_test.cpp for basic usage. In short:
+// instantiate a BVH: tinybvh::BVH bvh;
+// build it: bvh.Build( (tinybvh::bvhvec4*)triangleData, TRIANGLE_COUNT );
+// ..where triangleData is an array of four-component float vectors:
+// - For a single triangle, provide 3 vertices,
+// - For each vertex provide x, y and z.
+// The fourth float in each vertex is a dummy value and exists purely for
+// a more efficient layout of the data in memory.
+
+// More information about the BVH data structure:
+// https://jacco.ompf2.com/2022/04/13/how-to-build-a-bvh-part-1-basics
+
+// Further references:
 // - Parallel Spatial Splits in Bounding Volume Hierarchies:
 //   https://diglib.eg.org/items/f55715b1-9e56-4b40-af73-59d3dfba9fe7
 // - Heuristics for ray tracing using space subdivision:
@@ -134,12 +146,17 @@ inline float tinybvh_safercp( const float x ) { return x > 1e-12f ? (1.0f / x) :
 inline bvhvec3 tinybvh_safercp( const bvhvec3 a ) { return bvhvec3( tinybvh_safercp( a.x ), tinybvh_safercp( a.y ), tinybvh_safercp( a.z ) ); }
 static inline float tinybvh_min( const float a, const float b ) { return a < b ? a : b; }
 static inline float tinybvh_max( const float a, const float b ) { return a > b ? a : b; }
+static inline int tinybvh_min( const int a, const int b ) { return a < b ? a : b; }
+static inline int tinybvh_max( const int a, const int b ) { return a > b ? a : b; }
 static inline bvhvec2 tinybvh_min( const bvhvec2& a, const bvhvec2& b ) { return bvhvec2( tinybvh_min( a.x, b.x ), tinybvh_min( a.y, b.y ) ); }
 static inline bvhvec3 tinybvh_min( const bvhvec3& a, const bvhvec3& b ) { return bvhvec3( tinybvh_min( a.x, b.x ), tinybvh_min( a.y, b.y ), tinybvh_min( a.z, b.z ) ); }
 static inline bvhvec4 tinybvh_min( const bvhvec4& a, const bvhvec4& b ) { return bvhvec4( tinybvh_min( a.x, b.x ), tinybvh_min( a.y, b.y ), tinybvh_min( a.z, b.z ), tinybvh_min( a.w, b.w ) ); }
 static inline bvhvec2 tinybvh_max( const bvhvec2& a, const bvhvec2& b ) { return bvhvec2( tinybvh_max( a.x, b.x ), tinybvh_max( a.y, b.y ) ); }
 static inline bvhvec3 tinybvh_max( const bvhvec3& a, const bvhvec3& b ) { return bvhvec3( tinybvh_max( a.x, b.x ), tinybvh_max( a.y, b.y ), tinybvh_max( a.z, b.z ) ); }
 static inline bvhvec4 tinybvh_max( const bvhvec4& a, const bvhvec4& b ) { return bvhvec4( tinybvh_max( a.x, b.x ), tinybvh_max( a.y, b.y ), tinybvh_max( a.z, b.z ), tinybvh_max( a.w, b.w ) ); }
+static inline float tinybvh_clamp( const float x, const float a, const float b ) { return x < a ? a : (x > b ? b : x); }
+static inline int tinybvh_clamp( const int x, const int a, const int b ) { return x < a ? a : (x > b ? b : x); }
+template <class T> inline static void tinybvh_swap(T& a, T& b) { T t = a; a = b; b = t; } 
 
 // Operator overloads.
 // Only a minimal set is provided.
@@ -177,6 +194,15 @@ static inline float dot( const bvhvec2& a, const bvhvec2& b ) { return a.x * b.x
 static inline float dot( const bvhvec3& a, const bvhvec3& b ) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 static inline float dot( const bvhvec4& a, const bvhvec4& b ) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
 
+// Vector math: common operations.
+#include <math.h> // for sqrtf, fabs
+static float length( const bvhvec3& a ) { return sqrtf( a.x * a.x + a.y * a.y + a.z * a.z ); }
+static bvhvec3 normalize( const bvhvec3& a ) 
+{ 
+	float l = length( a ), rl = l == 0 ? 0 : (1.0f / l);
+	return a * rl;
+}
+
 // ============================================================================
 //
 //        R A Y   T R A C I N G   S T R U C T S  /  C L A S S E S
@@ -203,7 +229,7 @@ struct Ray
 	Ray() = default;
 	Ray( bvhvec3 origin, bvhvec3 direction, float t = 1e30f )
 	{
-		O = origin, D = direction, rD = tinybvh_safercp( D );
+		O = origin, D = normalize( direction ), rD = tinybvh_safercp( D );
 		hit.t = t;
 	}
 	bvhvec3 O, D, rD;
@@ -290,14 +316,15 @@ public:
 
 #ifdef TINYBVH_IMPLEMENTATION
 
-#include <assert.h>
-#include <string.h>
-#include "immintrin.h"
+#include <assert.h>			// for assert
+#include <string.h>			// for memset
+#include "immintrin.h"		// for __m256
 
-// Basic binned-SAH-builder. This is the reference builder; it yields a decent
-// tree suitable for ray tracing on the CPU. The code is platform-independent.
+// Basic single-function binned-SAH-builder. 
+// This is the reference builder; it yields a decent tree suitable for ray 
+// tracing on the CPU. This code uses no SIMD instructions. 
 // Faster code, using SSE/AVX, is available for x64 CPUs.
-// For GPU rendering the resulting BVH should be converted to a more optimal
+// For GPU rendering: The resulting BVH should be converted to a more optimal
 // format after construction.
 void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 {
@@ -342,7 +369,9 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 			{
 				const unsigned int fi = triIdx[node.leftFirst + i];
 				bvhint3 bi = bvhint3( ((fragment[fi].bmin + fragment[fi].bmax) * 0.5f - nmin3) * rpd3 );
-				bi.x = clamp( bi.x, 0, BVHBINS - 1 ), bi.y = clamp( bi.y, 0, BVHBINS - 1 ), bi.z = clamp( bi.z, 0, BVHBINS - 1 );
+				bi.x = tinybvh_clamp( bi.x, 0, BVHBINS - 1 );
+				bi.y = tinybvh_clamp( bi.y, 0, BVHBINS - 1 );
+				bi.z = tinybvh_clamp( bi.z, 0, BVHBINS - 1 );
 				binMin[0][bi.x] = tinybvh_min( binMin[0][bi.x], fragment[fi].bmin );
 				binMax[0][bi.x] = tinybvh_max( binMax[0][bi.x], fragment[fi].bmax ), count[0][bi.x]++;
 				binMin[1][bi.y] = tinybvh_min( binMin[1][bi.y], fragment[fi].bmin );
@@ -387,8 +416,8 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 			{
 				const unsigned int fi = triIdx[src];
 				int bi = (unsigned int)(((fragment[fi].bmin[bestAxis] + fragment[fi].bmax[bestAxis]) * 0.5f - nmin) * rpd);
-				bi = clamp( bi, 0, BVHBINS - 1 );
-				if ((unsigned int)bi <= bestPos) src++; else swap( triIdx[src], triIdx[--j] );
+				bi = tinybvh_clamp( bi, 0, BVHBINS - 1 );
+				if ((unsigned int)bi <= bestPos) src++; else tinybvh_swap( triIdx[src], triIdx[--j] );
 			}
 			// create child nodes
 			unsigned int leftCount = src - node.leftFirst, rightCount = node.triCount - leftCount;
@@ -607,7 +636,6 @@ void BVH::Refit()
 // visual impression of the structure of the BVH.
 int BVH::Intersect( Ray& ray ) const
 {
-	// traverse bvh
 	BVHNode* node = &bvhNode[0], * stack[64];
 	unsigned int stackPtr = 0, steps = 0;
 	while (1)
@@ -619,17 +647,18 @@ int BVH::Intersect( Ray& ray ) const
 			if (stackPtr == 0) break; else node = stack[--stackPtr];
 			continue;
 		}
-		BVHNode* child1 = &bvhNode[node->leftFirst], * child2 = &bvhNode[node->leftFirst + 1];
+		BVHNode* child1 = &bvhNode[node->leftFirst];
+		BVHNode* child2 = &bvhNode[node->leftFirst + 1];
 		float dist1 = child1->Intersect( ray ), dist2 = child2->Intersect( ray );
-		if (dist1 > dist2) { swap( dist1, dist2 ); swap( child1, child2 ); }
-		if (dist1 == 1e30f)
+		if (dist1 > dist2) { tinybvh_swap( dist1, dist2 ); tinybvh_swap( child1, child2 ); }
+		if (dist1 == 1e30f /* missed both child nodes */)
 		{
 			if (stackPtr == 0) break; else node = stack[--stackPtr];
 		}
-		else
+		else /* hit at least one node */
 		{
-			node = child1;
-			if (dist2 != 1e30f) stack[stackPtr++] = child2;
+			node = child1; /* continue with the nearest */
+			if (dist2 != 1e30f) stack[stackPtr++] = child2; /* push far child */
 		}
 	}
 	return steps;
@@ -653,7 +682,11 @@ void BVH::IntersectTri( Ray& ray, const unsigned int idx ) const
 	const float v = f * dot( ray.D, q );
 	if (v < 0 || u + v > 1) return;
 	const float t = f * dot( edge2, q );
-	if (t > 0 && t < ray.hit.t) ray.hit.t = t, ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx;
+	if (t > 0 && t < ray.hit.t) 
+	{
+		// register a hit: ray is shortened to t
+		ray.hit.t = t, ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx;
+	}
 }
 
 // IntersectAABB
@@ -661,11 +694,13 @@ float BVH::IntersectAABB( const Ray& ray, const bvhvec3& aabbMin, const bvhvec3&
 {
 	// "slab test" ray/AABB intersection
 	float tx1 = (aabbMin.x - ray.O.x) * ray.rD.x, tx2 = (aabbMax.x - ray.O.x) * ray.rD.x;
-	float tmin = min( tx1, tx2 ), tmax = max( tx1, tx2 );
+	float tmin = tinybvh_min( tx1, tx2 ), tmax = tinybvh_max( tx1, tx2 );
 	float ty1 = (aabbMin.y - ray.O.y) * ray.rD.y, ty2 = (aabbMax.y - ray.O.y) * ray.rD.y;
-	tmin = max( tmin, min( ty1, ty2 ) ), tmax = min( tmax, max( ty1, ty2 ) );
+	tmin = tinybvh_max( tmin, tinybvh_min( ty1, ty2 ) );
+	tmax = tinybvh_min( tmax, tinybvh_max( ty1, ty2 ) );
 	float tz1 = (aabbMin.z - ray.O.z) * ray.rD.z, tz2 = (aabbMax.z - ray.O.z) * ray.rD.z;
-	tmin = max( tmin, min( tz1, tz2 ) ), tmax = min( tmax, max( tz1, tz2 ) );
+	tmin = tinybvh_max( tmin, tinybvh_min( tz1, tz2 ) );
+	tmax = tinybvh_min( tmax, tinybvh_max( tz1, tz2 ) );
 	if (tmax >= tmin && tmin < ray.hit.t && tmax >= 0) return tmin; else return 1e30f;
 }
 

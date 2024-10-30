@@ -1,8 +1,11 @@
+// Minimal example for tiny_bvh.h
+
 #define TINYBVH_IMPLEMENTATION
 #include "tiny_bvh.h"
-#include "stdlib.h"
+#include "stdlib.h"		// for rand
+#include "stdio.h"		// for printf
 
-#define TRIANGLE_COUNT	128
+#define TRIANGLE_COUNT	8192
 
 struct TriVertex { float x, y, z, dummy; };
 TriVertex triangles[TRIANGLE_COUNT * 3];
@@ -35,9 +38,18 @@ int main()
 		v2.y = y + 0.1f * uniform_rand();
 		v2.z = z + 0.1f * uniform_rand();
 	}
+
 	// build a BVH over the scene
 	tinybvh::BVH bvh;
 	bvh.Build( (tinybvh::bvhvec4*)triangles, TRIANGLE_COUNT );
+
+	// from here: play with the BVH!
+	tinybvh::bvhvec3 O( 0.5f, 0.5f, -1 );
+	tinybvh::bvhvec3 D( 0.1f, 0, 2 );
+	tinybvh::Ray ray( O, D );
+	int steps = bvh.Intersect( ray );
+	printf( "nearest intersection: %f (found in %i traversal steps).\n", ray.hit.t, steps );
+
 	// all done.
 	return 0;
 }
