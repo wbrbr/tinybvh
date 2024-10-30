@@ -13,5 +13,8 @@ The current version of the library is a 'prototype'; please expect changes to th
 * Collapse to 4-wide and 8-wide BVH
 * Optimization of existing BVH
 
+# Contact
+Questions, remarks? Contact me at bikker.j@gmail.com or on twitter: @j_bikker, or BlueSky: @jbikker.bsky.social .
+
 # License
-This library is made available under the MIT 2.0 license.
+This library is made available under the MIT license, which starts as follows: "Permission is hereby granted, free of charge, .. , to deal in the Software **without restriction**". Enjoy.
