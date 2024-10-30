@@ -72,14 +72,17 @@ THE SOFTWARE.
 #ifdef _MSC_VER
 // Visual Studio / C11
 #include <malloc.h>
+#include <math.h> // for sqrtf, fabs
 #define ALIGNED( x ) __declspec( align( x ) )
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( x ), 64 ) )
 #define ALIGNED_FREE( x ) _aligned_free( x )
 #else
 // gcc
+#include <cstdlib>
+#include <cmath>
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, ( x ) ) )
-#define ALIGNED_FREE( x ) free( x )
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( x ), 64 ) )
+#define ALIGNED_FREE( x ) _aligned_free( x )
 // TODO: Intel, Posix; see: 
 // https://stackoverflow.com/questions/32612881/why-use-mm-malloc-as-opposed-to-aligned-malloc-alligned-alloc-or-posix-mem
 #endif
@@ -195,7 +198,6 @@ static inline float dot( const bvhvec3& a, const bvhvec3& b ) { return a.x * b.x
 static inline float dot( const bvhvec4& a, const bvhvec4& b ) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
 
 // Vector math: common operations.
-#include <math.h> // for sqrtf, fabs
 static float length( const bvhvec3& a ) { return sqrtf( a.x * a.x + a.y * a.y + a.z * a.z ); }
 static bvhvec3 normalize( const bvhvec3& a )
 {
@@ -328,19 +330,20 @@ public:
 // format after construction.
 void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 {
-	// reset node pool
-	newNodePtr = 2, triCount = primCount;
+	// allocate on first build
 	if (!bvhNode)
 	{
+		idxCount = primCount;
+		triCount = primCount;
 		bvhNode = (BVHNode*)ALIGNED_MALLOC( triCount * 2 * sizeof( BVHNode ) );
 		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
 		triIdx = new unsigned int[triCount];
 		tris = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
 		fragment = new Fragment[triCount];
-		idxCount = primCount;
-		triCount = primCount;
 	}
 	else assert( triCount == primCount ); // don't change triangle count between builds.
+	// reset node pool
+	newNodePtr = 2;
 	// assign all triangles to the root node
 	BVHNode& root = bvhNode[0];
 	root.leftFirst = 0, root.triCount = triCount, root.aabbMin = bvhvec3( 1e30f ), root.aabbMax = bvhvec3( -1e30f );
@@ -442,15 +445,22 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 // This code produces BVHs nearly identical to reference, but much faster.
 // On a 12th gen laptop i7 CPU, Sponza Crytek (~260k tris) is processed in 51ms.
 // The code relies on the availability of AVX instructions. AVX2 is not needed.
-__forceinline float halfArea( const __m128 a /* a contains extent of aabb */ )
+#ifdef _MSC_VER
+#define LANE(a,b) a.m128_f32[b]
+#define ILANE(a,b) a.m128i_i32[b]
+#else
+#define LANE(a,b) a[b]
+#define ILANE(a,b) a[b]
+#endif
+inline float halfArea( const __m128 a /* a contains extent of aabb */ )
 {
-	return a.m128_f32[0] * a.m128_f32[1] + a.m128_f32[1] * a.m128_f32[2] + a.m128_f32[2] * a.m128_f32[3];
+	return LANE( a, 0 ) * LANE( a, 1 ) + LANE( a, 1 ) * LANE( a, 2 ) + LANE( a, 2 ) * LANE( a, 3 );
 }
-__forceinline float halfArea( const __m256 a /* a contains aabb itself, with min.xyz negated */ )
+inline float halfArea( const __m256 a /* a contains aabb itself, with min.xyz negated */ )
 {
 	const __m128 q = _mm256_castps256_ps128( _mm256_add_ps( _mm256_permute2f128_ps( a, a, 5 ), a ) );
 	const __m128 v = _mm_mul_ps( q, _mm_shuffle_ps( q, q, 9 ) );
-	return v.m128_f32[0] + v.m128_f32[1] + v.m128_f32[2];
+	return LANE( v, 0 ) + LANE( v, 1 ) + LANE( v, 2 );
 }
 #define PROCESS_PLANE( a, pos, ANLR, lN, rN, lb, rb ) if (lN * rN != 0) { \
 	ANLR = halfArea( lb ) * (float)lN + halfArea( rb ) * (float)rN; if (ANLR < splitCost) \
@@ -464,10 +474,10 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 	int test = BVHBINS;
 	if (test != 8) assert( false ); // AVX builders require BVHBINS == 8.
 	// aligned data
-	__declspec(align(64)) __m256 binbox[3 * BVHBINS];				// 768 bytes
-	__declspec(align(64)) __m256 binboxOrig[3 * BVHBINS];			// 768 bytes
-	__declspec(align(64)) unsigned int count[3][BVHBINS] = { 0 };	// 96 bytes
-	__declspec(align(64)) __m256 bestLBox, bestRBox;				// 64 bytes
+	ALIGNED( 64 ) __m256 binbox[3 * BVHBINS];				// 768 bytes
+	ALIGNED( 64 ) __m256 binboxOrig[3 * BVHBINS];			// 768 bytes
+	ALIGNED( 64 ) unsigned int count[3][BVHBINS] = { 0 };	// 96 bytes
+	ALIGNED( 64 ) __m256 bestLBox, bestRBox;				// 64 bytes
 	// some constants
 	static const __m128 min4 = _mm_set1_ps( 1e30f ), max4 = _mm_set1_ps( -1e30f ), half4 = _mm_set1_ps( 0.5f );
 	static const __m128 two4 = _mm_set1_ps( 2.0f ), min1 = _mm_set1_ps( -1 );
@@ -508,7 +518,7 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 	rootMin = _mm_xor_ps( rootMin, signFlip4 );
 	root.aabbMin = *(bvhvec3*)&rootMin, root.aabbMax = *(bvhvec3*)&rootMax;
 	// subdivide recursively
-	__declspec(align(64)) unsigned int task[128], taskCount = 0, nodeIdx = 0;
+	ALIGNED( 64 ) unsigned int task[128], taskCount = 0, nodeIdx = 0;
 	const bvhvec3 minDim = (root.aabbMax - root.aabbMin) * 1e-10f;
 	while (1)
 	{
@@ -527,7 +537,7 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 			__m256 r0, r1, r2, f = frag8[fi];
 			__m128i bi4 = _mm_cvtps_epi32( _mm_sub_ps( _mm_mul_ps( _mm_sub_ps( _mm_sub_ps( frag4[fi].bmax4, frag4[fi].bmin4 ), nmin4 ), rpd4 ), half4 ) );
 			memcpy( binbox, binboxOrig, sizeof( binbox ) );
-			unsigned int i0 = bi4.m128i_i32[0], i1 = bi4.m128i_i32[1], i2 = bi4.m128i_i32[2], * ti = triIdx + node.leftFirst + 1;
+			unsigned int i0 = ILANE( bi4, 0 ), i1 = ILANE( bi4, 1 ), i2 = ILANE( bi4, 2 ), * ti = triIdx + node.leftFirst + 1;
 			for (unsigned int i = 0; i < node.triCount - 1; i++)
 			{
 				const unsigned int fid = *ti++;
@@ -536,9 +546,9 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 				r0 = _mm256_max_ps( b0, f ), r1 = _mm256_max_ps( b1, f ), r2 = _mm256_max_ps( b2, f );
 				const __m128i b4 = _mm_cvtps_epi32( _mm_sub_ps( _mm_mul_ps( _mm_sub_ps( _mm_sub_ps( fmax, fmin ), nmin4 ), rpd4 ), half4 ) );
 				f = frag8[fid], count[0][i0]++, count[1][i1]++, count[2][i2]++;
-				binbox[i0] = r0, i0 = b4.m128i_i32[0];
-				binbox[BVHBINS + i1] = r1, i1 = b4.m128i_i32[1];
-				binbox[2 * BVHBINS + i2] = r2, i2 = b4.m128i_i32[2];
+				binbox[i0] = r0, i0 = ILANE( b4, 0 );
+				binbox[BVHBINS + i1] = r1, i1 = ILANE( b4, 1 );
+				binbox[2 * BVHBINS + i2] = r2, i2 = ILANE( b4, 2 );
 			}
 			// final business for final fragment
 			const __m256 b0 = binbox[i0], b1 = binbox[BVHBINS + i1], b2 = binbox[2 * BVHBINS + i2];
