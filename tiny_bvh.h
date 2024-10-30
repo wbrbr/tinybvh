@@ -81,8 +81,8 @@ THE SOFTWARE.
 #include <cstdlib>
 #include <cmath>
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, ( x ) ) )
-#define ALIGNED_FREE( x ) free( x )
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
+#define ALIGNED_FREE( x ) _mm_free( x )
 // TODO: Intel, Posix; see: 
 // https://stackoverflow.com/questions/32612881/why-use-mm-malloc-as-opposed-to-aligned-malloc-alligned-alloc-or-posix-mem
 #endif
