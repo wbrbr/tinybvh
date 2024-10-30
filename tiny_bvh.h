@@ -81,8 +81,8 @@ THE SOFTWARE.
 #include <cstdlib>
 #include <cmath>
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( x ), 64 ) )
-#define ALIGNED_FREE( x ) _aligned_free( x )
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( 64, ( x ) ) )
+#define ALIGNED_FREE( x ) free( x )
 // TODO: Intel, Posix; see: 
 // https://stackoverflow.com/questions/32612881/why-use-mm-malloc-as-opposed-to-aligned-malloc-alligned-alloc-or-posix-mem
 #endif
@@ -265,8 +265,8 @@ public:
 	~BVH()
 	{
 		ALIGNED_FREE( bvhNode );
-		delete triIdx;
-		delete fragment;
+		delete [] triIdx;
+		delete [] fragment;
 		bvhNode = 0, triIdx = 0, fragment = 0;
 	}
 	float SAHCost( const unsigned int nodeIdx = 0 ) const
@@ -366,7 +366,8 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 			// find optimal object split
 			bvhvec3 binMin[3][BVHBINS], binMax[3][BVHBINS];
 			for (unsigned int a = 0; a < 3; a++) for (unsigned int i = 0; i < BVHBINS; i++) binMin[a][i] = 1e30f, binMax[a][i] = -1e30f;
-			unsigned int count[3][BVHBINS] = { 0 };
+			unsigned int count[3][BVHBINS];
+			memset( count, 0, BVHBINS * 3 * sizeof( unsigned int ) );
 			const bvhvec3 rpd3 = bvhvec3( BVHBINS / (node.aabbMax - node.aabbMin) ), nmin3 = node.aabbMin;
 			for (unsigned int i = 0; i < node.triCount; i++) // process all tris for x,y and z at once
 			{
@@ -479,9 +480,9 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 	ALIGNED( 64 ) unsigned int count[3][BVHBINS] = { 0 };	// 96 bytes
 	ALIGNED( 64 ) __m256 bestLBox, bestRBox;				// 64 bytes
 	// some constants
-	static const __m128 min4 = _mm_set1_ps( 1e30f ), max4 = _mm_set1_ps( -1e30f ), half4 = _mm_set1_ps( 0.5f );
+	static const __m128 max4 = _mm_set1_ps( -1e30f ), half4 = _mm_set1_ps( 0.5f );
 	static const __m128 two4 = _mm_set1_ps( 2.0f ), min1 = _mm_set1_ps( -1 );
-	static const __m256 min8 = _mm256_set1_ps( 1e30f ), max8 = _mm256_set1_ps( -1e30f );
+	static const __m256 max8 = _mm256_set1_ps( -1e30f );
 	static const __m256 signFlip8 = _mm256_setr_ps( -0.0f, -0.0f, -0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f );
 	static const __m128 signFlip4 = _mm_setr_ps( -0.0f, -0.0f, -0.0f, 0.0f );
 	static const __m128 mask3 = _mm_cmpeq_ps( _mm_setr_ps( 0, 0, 0, 1 ), _mm_setzero_ps() );
