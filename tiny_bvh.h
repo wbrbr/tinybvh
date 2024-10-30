@@ -99,7 +99,7 @@ struct ALIGNED( 16 ) bvhvec4
 	// vector naming is designed to not cause any name clashes.
 	bvhvec4() = default;
 	bvhvec4( const float a, const float b, const float c, const float d ) : x( a ), y( b ), z( c ), w( d ) {}
-	bvhvec4( const float a ) : x( a ), y( a ), z( a ), w( a) {}
+	bvhvec4( const float a ) : x( a ), y( a ), z( a ), w( a ) {}
 	float& operator [] ( const int i ) { return cell[i]; }
 	union { struct { float x, y, z, w; }; float cell[4]; };
 };
@@ -156,7 +156,7 @@ static inline bvhvec3 tinybvh_max( const bvhvec3& a, const bvhvec3& b ) { return
 static inline bvhvec4 tinybvh_max( const bvhvec4& a, const bvhvec4& b ) { return bvhvec4( tinybvh_max( a.x, b.x ), tinybvh_max( a.y, b.y ), tinybvh_max( a.z, b.z ), tinybvh_max( a.w, b.w ) ); }
 static inline float tinybvh_clamp( const float x, const float a, const float b ) { return x < a ? a : (x > b ? b : x); }
 static inline int tinybvh_clamp( const int x, const int a, const int b ) { return x < a ? a : (x > b ? b : x); }
-template <class T> inline static void tinybvh_swap(T& a, T& b) { T t = a; a = b; b = t; } 
+template <class T> inline static void tinybvh_swap( T& a, T& b ) { T t = a; a = b; b = t; }
 
 // Operator overloads.
 // Only a minimal set is provided.
@@ -186,9 +186,9 @@ inline bvhvec3 operator/( float b, const bvhvec3& a ) { return bvhvec3( b / a.x,
 inline bvhvec4 operator/( float b, const bvhvec4& a ) { return bvhvec4( b / a.x, b / a.y, b / a.z, b / a.w ); }
 
 // Vector math: cross and dot.
-static inline bvhvec3 cross( const bvhvec3& a, const bvhvec3& b ) 
-{ 
-	return bvhvec3( a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x ); 
+static inline bvhvec3 cross( const bvhvec3& a, const bvhvec3& b )
+{
+	return bvhvec3( a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x );
 }
 static inline float dot( const bvhvec2& a, const bvhvec2& b ) { return a.x * b.x + a.y * b.y; }
 static inline float dot( const bvhvec3& a, const bvhvec3& b ) { return a.x * b.x + a.y * b.y + a.z * b.z; }
@@ -197,8 +197,8 @@ static inline float dot( const bvhvec4& a, const bvhvec4& b ) { return a.x * b.x
 // Vector math: common operations.
 #include <math.h> // for sqrtf, fabs
 static float length( const bvhvec3& a ) { return sqrtf( a.x * a.x + a.y * a.y + a.z * a.z ); }
-static bvhvec3 normalize( const bvhvec3& a ) 
-{ 
+static bvhvec3 normalize( const bvhvec3& a )
+{
 	float l = length( a ), rl = l == 0 ? 0 : (1.0f / l);
 	return a * rl;
 }
@@ -461,7 +461,8 @@ __forceinline float halfArea( const __m256 a /* a contains aabb itself, with min
 #endif
 void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 {
-	if constexpr (BVHBINS != 8) assert( false ); // AVX builders require BVHBINS == 8.
+	int test = BVHBINS;
+	if (test != 8) assert( false ); // AVX builders require BVHBINS == 8.
 	// aligned data
 	__declspec(align(64)) __m256 binbox[3 * BVHBINS];				// 768 bytes
 	__declspec(align(64)) __m256 binboxOrig[3 * BVHBINS];			// 768 bytes
@@ -682,7 +683,7 @@ void BVH::IntersectTri( Ray& ray, const unsigned int idx ) const
 	const float v = f * dot( ray.D, q );
 	if (v < 0 || u + v > 1) return;
 	const float t = f * dot( edge2, q );
-	if (t > 0 && t < ray.hit.t) 
+	if (t > 0 && t < ray.hit.t)
 	{
 		// register a hit: ray is shortened to t
 		ray.hit.t = t, ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx;
