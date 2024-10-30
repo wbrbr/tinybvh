@@ -10,6 +10,8 @@ The library is designed to be easy to use. Please have a look at tiny_bvh_test.c
 # Version
 The current version of the library is a 'prototype'; please expect changes to the interface. Once the interface has settled, more functionality will follow. Plans:
 * Conversion to GPU-friendly format
+* Collapse to 4-wide and 8-wide BVH
+* Optimization of existing BVH
 
 # License
 This library is made available under the MIT 2.0 license.
