@@ -9,6 +9,8 @@ The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look
 
 ````g++ -std=c++20 -mavx tiny_bvh_test.cpp -o tiny_bvh_test````
 
+Thanks to Eddy L. O. Jansson for help with g++ and clang.
+
 # Version
 The current version of the library is a 'prototype'; please expect changes to the interface. Once the interface has settled, more functionality will follow. Plans:
 * Spatial Splits (SBVH)
