@@ -5,7 +5,8 @@ Single-header BVH construction and traversal library written as "Sane C++" (or "
 A Bounding Volume Hierarchy is a data structure used to quickly find intersections in a virtual scene; most commonly between a ray and a group of triangles. You can read more about this in a series of articles on the subject: https://jacco.ompf2.com/2022/04/13/how-to-build-a-bvh-part-1-basics .
 
 # How To Use
-The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look at tiny_bvh_test.cpp for an example. A Visual Studio project is included. There is no CMake file but the example consists of only a single source file, which can be compiled on any system _(let me know if this is untrue)_.
+The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look at tiny_bvh_test.cpp for an example. A Visual Studio project is included. There is no CMake file but the example consists of only a single source file, which can be compiled with clang or g++:
+````g++ -std=c++20 -mavx tiny_bvh_test.cpp -o tiny_bvh_test````
 
 # Version
 The current version of the library is a 'prototype'; please expect changes to the interface. Once the interface has settled, more functionality will follow. Plans:
