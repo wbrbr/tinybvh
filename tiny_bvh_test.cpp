@@ -15,7 +15,7 @@
 struct TriVertex { float x, y, z, dummy; };
 TriVertex triangles[TRIANGLE_COUNT * 3];
 
-float uniform_rand() { return (float)rand() / RAND_MAX; }
+float uniform_rand() { return (float)rand() / (float)RAND_MAX; }
 
 int main()
 {
