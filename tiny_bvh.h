@@ -1,4 +1,4 @@
-/*
+﻿/*
 The MIT License (MIT)
 
 Copyright (c) 2024, Jacco Bikker / Breda University of Applied Sciences.
@@ -52,6 +52,10 @@ THE SOFTWARE.
 //   https://graphicsinterface.org/wp-content/uploads/gi1989-22.pdf
 // - Heuristic Ray Shooting Algorithms:
 //   https://dcgi.fel.cvut.cz/home/havran/DISSVH/phdthesis.html
+
+// Contributors:
+// Eddy L O Jansson: g++ / clang support
+// Aras Pranckevičius: non-Intel architecture support
 
 #ifndef TINY_BVH_H_
 #define TINY_BVH_H_
@@ -320,7 +324,7 @@ public:
 	BVHNode* bvhNode = 0;			// BVH node pool. Root is always in node 0.
 };
 
-} // namespace tinybvh {
+} // namespace tinybvh
 
 // ============================================================================
 //
@@ -734,7 +738,7 @@ float BVH::IntersectAABB( const Ray& ray, const bvhvec3& aabbMin, const bvhvec3&
 
 #endif
 
-}
+} // namespace tinybvh
 
 #endif
 
