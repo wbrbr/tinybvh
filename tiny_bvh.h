@@ -111,12 +111,15 @@ namespace tinybvh {
 #pragma warning ( disable: 4201 /* nameless struct / union */ )
 #endif
 
+struct bvhvec3;
 struct ALIGNED( 16 ) bvhvec4
 {
 	// vector naming is designed to not cause any name clashes.
 	bvhvec4() = default;
 	bvhvec4( const float a, const float b, const float c, const float d ) : x( a ), y( b ), z( c ), w( d ) {}
 	bvhvec4( const float a ) : x( a ), y( a ), z( a ), w( a ) {}
+	bvhvec4( const bvhvec3& a );
+	bvhvec4( const bvhvec3& a, float b );
 	float& operator [] ( const int i ) { return cell[i]; }
 	union { struct { float x, y, z, w; }; float cell[4]; };
 };
@@ -150,6 +153,11 @@ struct bvhint3
 	int& operator [] ( const int i ) { return cell[i]; }
 	union { struct { int x, y, z; }; int cell[3]; };
 };
+
+#ifdef TINYBVH_IMPLEMENTATION
+bvhvec4::bvhvec4( const bvhvec3& a ) { x = a.x; y = a.y; z = a.z; w = 0; }
+bvhvec4::bvhvec4( const bvhvec3& a, float b ) { x = a.x; y = a.y; z = a.z; w = b; }
+#endif
 
 #ifdef _MSC_VER
 #pragma warning ( pop )
@@ -315,7 +323,7 @@ private:
 		return e.x * e.y + e.y * e.z + e.z * e.x;
 	}
 public:
-	bvhvec4* tris = 0;				// pointer to input primitive array: 3x16 bytes per tri
+	bvhvec4* verts = 0;				// pointer to input primitive array: 3x16 bytes per tri
 	unsigned int triCount = 0;		// number of primitives in tris
 	Fragment* fragment = 0;			// input primitive bounding boxes
 	unsigned int* triIdx = 0;				// primitive index array
@@ -358,7 +366,7 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 		bvhNode = (BVHNode*)ALIGNED_MALLOC( triCount * 2 * sizeof( BVHNode ) );
 		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
 		triIdx = new unsigned int[triCount];
-		tris = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
+		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
 		fragment = new Fragment[triCount];
 	}
 	else assert( triCount == primCount ); // don't change triangle count between builds.
@@ -370,8 +378,8 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 	// initialize fragments and initialize root node bounds
 	for (unsigned int i = 0; i < triCount; i++)
 	{
-		fragment[i].bmin = tinybvh_min( tinybvh_min( tris[i * 3], tris[i * 3 + 1] ), tris[i * 3 + 2] );
-		fragment[i].bmax = tinybvh_max( tinybvh_max( tris[i * 3], tris[i * 3 + 1] ), tris[i * 3 + 2] );
+		fragment[i].bmin = tinybvh_min( tinybvh_min( verts[i * 3], verts[i * 3 + 1] ), verts[i * 3 + 2] );
+		fragment[i].bmax = tinybvh_max( tinybvh_max( verts[i * 3], verts[i * 3 + 1] ), verts[i * 3 + 2] );
 		root.aabbMin = tinybvh_min( root.aabbMin, fragment[i].bmin );
 		root.aabbMax = tinybvh_max( root.aabbMax, fragment[i].bmax ), triIdx[i] = i;
 	}
@@ -513,7 +521,7 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 	if (!bvhNode)
 	{
 		triCount = primCount;
-		tris = (bvhvec4*)vertices;
+		verts = (bvhvec4*)vertices;
 		triIdx = new unsigned int[triCount];
 		bvhNode = (BVHNode*)ALIGNED_MALLOC( triCount * 2 * sizeof( BVHNode ) );
 		memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
@@ -524,7 +532,7 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 	struct FragSSE { __m128 bmin4, bmax4; };
 	FragSSE* frag4 = (FragSSE*)fragment;
 	__m256* frag8 = (__m256*)fragment;
-	const __m128* tris4 = (__m128*)tris;
+	const __m128* tris4 = (__m128*)verts;
 	// assign all triangles to the root node
 	BVHNode& root = bvhNode[0];
 	root.leftFirst = 0, root.triCount = triCount;
@@ -648,9 +656,9 @@ void BVH::Refit()
 			for (unsigned int first = node.leftFirst, j = 0; j < node.triCount; j++)
 			{
 				const unsigned int vertIdx = triIdx[first + j] * 3;
-				aabbMin = tinybvh_min( aabbMin, tris[vertIdx] ), aabbMax = tinybvh_max( aabbMax, tris[vertIdx] );
-				aabbMin = tinybvh_min( aabbMin, tris[vertIdx + 1] ), aabbMax = tinybvh_max( aabbMax, tris[vertIdx + 1] );
-				aabbMin = tinybvh_min( aabbMin, tris[vertIdx + 2] ), aabbMax = tinybvh_max( aabbMax, tris[vertIdx + 2] );
+				aabbMin = tinybvh_min( aabbMin, verts[vertIdx] ), aabbMax = tinybvh_max( aabbMax, verts[vertIdx] );
+				aabbMin = tinybvh_min( aabbMin, verts[vertIdx + 1] ), aabbMax = tinybvh_max( aabbMax, verts[vertIdx + 1] );
+				aabbMin = tinybvh_min( aabbMin, verts[vertIdx + 2] ), aabbMax = tinybvh_max( aabbMax, verts[vertIdx + 2] );
 			}
 			node.aabbMin = aabbMin, node.aabbMax = aabbMax;
 			continue;
@@ -701,13 +709,13 @@ void BVH::IntersectTri( Ray& ray, const unsigned int idx ) const
 {
 	// Moeller-Trumbore ray/triangle intersection algorithm
 	const unsigned int vertIdx = idx * 3;
-	const bvhvec3 edge1 = tris[vertIdx + 1] - tris[vertIdx];
-	const bvhvec3 edge2 = tris[vertIdx + 2] - tris[vertIdx];
+	const bvhvec3 edge1 = verts[vertIdx + 1] - verts[vertIdx];
+	const bvhvec3 edge2 = verts[vertIdx + 2] - verts[vertIdx];
 	const bvhvec3 h = cross( ray.D, edge2 );
 	const float a = dot( edge1, h );
 	if (fabs( a ) < 0.0000001f) return; // ray parallel to triangle
 	const float f = 1 / a;
-	const bvhvec3 s = ray.O - bvhvec3( tris[vertIdx] );
+	const bvhvec3 s = ray.O - bvhvec3( verts[vertIdx] );
 	const float u = f * dot( s, h );
 	if (u < 0 || u > 1) return;
 	const bvhvec3 q = cross( s, edge1 );

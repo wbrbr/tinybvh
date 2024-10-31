@@ -5,6 +5,8 @@ VisualStudioVersion = 17.11.35327.3
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tiny_bvh_test", "tiny_bvh_test.vcxproj", "{0B5C86B2-9438-49E3-BF1A-4E1593BB436D}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tiny_bvh_renderer", "tiny_bvh_renderer.vcxproj", "{103715F7-8E20-4058-B18C-CAF6E36F23B2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -21,6 +23,14 @@ Global
 		{0B5C86B2-9438-49E3-BF1A-4E1593BB436D}.Release|x64.Build.0 = Release|x64
 		{0B5C86B2-9438-49E3-BF1A-4E1593BB436D}.Release|x86.ActiveCfg = Release|Win32
 		{0B5C86B2-9438-49E3-BF1A-4E1593BB436D}.Release|x86.Build.0 = Release|Win32
+		{103715F7-8E20-4058-B18C-CAF6E36F23B2}.Debug|x64.ActiveCfg = Debug|x64
+		{103715F7-8E20-4058-B18C-CAF6E36F23B2}.Debug|x64.Build.0 = Debug|x64
+		{103715F7-8E20-4058-B18C-CAF6E36F23B2}.Debug|x86.ActiveCfg = Debug|Win32
+		{103715F7-8E20-4058-B18C-CAF6E36F23B2}.Debug|x86.Build.0 = Debug|Win32
+		{103715F7-8E20-4058-B18C-CAF6E36F23B2}.Release|x64.ActiveCfg = Release|x64
+		{103715F7-8E20-4058-B18C-CAF6E36F23B2}.Release|x64.Build.0 = Release|x64
+		{103715F7-8E20-4058-B18C-CAF6E36F23B2}.Release|x86.ActiveCfg = Release|Win32
+		{103715F7-8E20-4058-B18C-CAF6E36F23B2}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
