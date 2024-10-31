@@ -9,6 +9,10 @@ The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look
 
 ````g++ -std=c++20 -mavx tiny_bvh_test.cpp -o tiny_bvh_test````
 
+The single-source sample ASCII test renderer can be compiled with
+
+````g++ -std=c++20 -mavx tiny_bvh_renderer.cpp -o tiny_bvh_renderer````
+
 Thanks to Eddy L. O. Jansson for help with g++ and clang.
 
 # Version
