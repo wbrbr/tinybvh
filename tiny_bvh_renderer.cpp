@@ -78,7 +78,7 @@ int main()
 				bvhvec3 P = p1 + u * (p2 - p1) + v * (p3 - p1);
 				Ray ray( eye, normalize( P - eye ) );
 				bvh.Intersect( ray );
-				sum += ray.hit.t;
+				sum += ray.hit.t > 999 ? 0 : ray.hit.t;
 			}
 			float t = (sum / 16 - 2.3f) / (6.12f - 2.3f);
 			int color = (int)(90.0f / (t + 1));
