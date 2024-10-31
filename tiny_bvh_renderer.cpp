@@ -21,6 +21,7 @@ struct TriVertex {
 };
 TriVertex triangles[SPHERE_COUNT * 6 * 98 * 3];
 int verts = 0, spheres = 0;
+// ASCII shading: https://stackoverflow.com/a/74186686
 char level[92] = "`.-':_,^=;><+!rc*/z?sLTv)J7(|Fi{C}fI31tlu[neoZ5Yxjya]2ESwqkP6h9d4VpOGbUAKXHm8RD#$Bg0MNWQ%&@";
 
 void create_sphere( float x, float y, float z, float s )
