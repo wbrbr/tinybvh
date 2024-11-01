@@ -53,9 +53,11 @@ THE SOFTWARE.
 // - Heuristic Ray Shooting Algorithms:
 //   https://dcgi.fel.cvut.cz/home/havran/DISSVH/phdthesis.html
 
-// Contributors:
+// Author and contributors:
+// Jacco Bikker: BVH code and examples
 // Eddy L O Jansson: g++ / clang support
 // Aras Pranckevičius: non-Intel architecture support
+// Jefferson Amstutz: CMake surpport
 
 #ifndef TINY_BVH_H_
 #define TINY_BVH_H_
