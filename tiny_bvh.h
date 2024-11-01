@@ -478,10 +478,12 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 // The code relies on the availability of AVX instructions. AVX2 is not needed.
 #ifdef _MSC_VER
 #define LANE(a,b) a.m128_f32[b]
+// Not using clang/g++ method under MSCC; compiler may benefit from .m128_i32.
 #define ILANE(a,b) a.m128i_i32[b]
 #else
 #define LANE(a,b) a[b]
-#define ILANE(a,b) ((int*)&a)[b] // compiler should handle this, make sure it does
+// Below method reduces to a single instruction.
+#define ILANE(a,b) _mm_cvtsi128_si32(_mm_castps_si128( _mm_shuffle_ps(_mm_castsi128_ps( a ), _mm_castsi128_ps( a ), b)))
 #endif
 inline float halfArea( const __m128 a /* a contains extent of aabb */ )
 {
