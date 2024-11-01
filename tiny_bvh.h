@@ -512,7 +512,7 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 	// aligned data
 	ALIGNED( 64 ) __m256 binbox[3 * BVHBINS];				// 768 bytes
 	ALIGNED( 64 ) __m256 binboxOrig[3 * BVHBINS];			// 768 bytes
-	ALIGNED( 64 ) unsigned int count[3][BVHBINS] = { 0 };	// 96 bytes
+	ALIGNED( 64 ) unsigned int count[3][BVHBINS]{};			// 96 bytes
 	ALIGNED( 64 ) __m256 bestLBox, bestRBox;				// 64 bytes
 	// some constants
 	static const __m128 max4 = _mm_set1_ps( -1e30f ), half4 = _mm_set1_ps( 0.5f );

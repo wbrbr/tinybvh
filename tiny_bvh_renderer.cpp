@@ -84,7 +84,7 @@ int main()
 			int color = (int)(90.0f / (t + 1));
 			line[x >> 2] = level[90 - tinybvh_clamp( color, 0, 90 )];
 		}
-		line[120] = '\n', line[121] = 0, printf( line );
+		line[120] = '\n', line[121] = 0, printf( "%s", line );
 	}
 	// all done.
 	printf( "\nscene: %i spheres, %i triangles.\n", spheres, verts / 3 );
