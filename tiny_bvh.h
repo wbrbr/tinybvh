@@ -481,7 +481,7 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 #define ILANE(a,b) a.m128i_i32[b]
 #else
 #define LANE(a,b) a[b]
-#define ILANE(a,b) a[b]
+#define ILANE(a,b) ((int*)&a)[b] // compiler should handle this, make sure it does
 #endif
 inline float halfArea( const __m128 a /* a contains extent of aabb */ )
 {
