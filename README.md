@@ -13,7 +13,7 @@ Once a BVH is constructed, it may be _refitted_ in case the triangles moved usin
 A constructed BVH can be used to quickly intersect a ray with the geometry, using ````BVH::Intersect````.
 
 # How To Use
-The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look at tiny_bvh_test.cpp for an example. A Visual Studio project is included. There is no CMake file but the example consists of only a single source file, which can be compiled with clang or g++, e.g.:
+The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look at tiny_bvh_test.cpp for an example. A Visual Studio 'solution' (.sln/.vcxproj) is included, as well as a CMake file. That being said: The examples consists of only a single source file, which can be compiled with clang or g++, e.g.:
 
 ````g++ -std=c++20 -mavx tiny_bvh_test.cpp -o tiny_bvh_test````
 
