@@ -19,7 +19,7 @@ struct TriVertex {
 	TriVertex( bvhvec3 v ) : x( v.x ), y( v.y ), z( v.z ), dummy( 0 ) {}
 	float x, y, z, dummy;
 };
-TriVertex triangles[SPHERE_COUNT * 6 * 98 * 3];
+TriVertex triangles[SPHERE_COUNT * 6 * 2 * 49 * 3]{};
 int verts = 0, spheres = 0;
 BVH bvh;
 
@@ -29,12 +29,12 @@ void create_sphere( float x, float y, float z, float s )
 	bvhvec3 p[384], pos( x, y, z ), ofs( 3.5 );
 	for (int i = 0, u = 0; u < 8; u++) for (int v = 0; v < 8; v++, i++)
 		P( 0, u, v, 0 ), P( 1, u, 0, v ), P( 2, 0, u, v ),
-		P( 3, u, v, 3 ), P( 4, u, 3, v ), P( 5, 3, u, v );
+		P( 3, u, v, 7 ), P( 4, u, 7, v ), P( 5, 7, u, v );
 	for (int i = 0; i < 384; i++) p[i] = normalize( p[i] - ofs ) * s + pos;
-	for (int i = 0, side = 0; side < 6; side++, i += 8 )
+	for ( int i = 0, side = 0; side < 6; side++, i += 8 )
 		for (int u = 0; u < 7; u++, i++) for (int v = 0; v < 7; v++, i++)
-			triangles[verts++] = p[i], triangles[verts++] = p[i + 1],
-			triangles[verts++] = p[i + 8], triangles[verts++] = p[i + 1],
+			triangles[verts++] = p[i], triangles[verts++] = p[i + 8],
+			triangles[verts++] = p[i + 1], triangles[verts++] = p[i + 1],
 			triangles[verts++] = p[i + 9], triangles[verts++] = p[i + 8];
 }
 
@@ -62,7 +62,7 @@ void Init()
 void Tick( uint32_t* buf )
 {
 	// trace primary rays
-	bvhvec3 eye( -3.5f, -1.5f, -6 ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
+	bvhvec3 eye( -3.5f, -1.5f, -6.5f ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
 	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
 	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
 	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
@@ -82,8 +82,9 @@ void Tick( uint32_t* buf )
 			bvhvec3 v1 = *(bvhvec3*)&triangles[primIdx * 3 + 1];
 			bvhvec3 v2 = *(bvhvec3*)&triangles[primIdx * 3 + 2];
 			bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
-			c = (int)( 255.0f * fabs( N.z ) );
+			c = (int)( 200.0f * fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) ) ) + 55;
 		}
 		buf[x + y * SCRWIDTH] = c + (c << 8) + (c << 16); 
 	}
+	else y = 0;
 }
