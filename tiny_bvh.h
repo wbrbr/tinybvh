@@ -494,9 +494,12 @@ inline float halfArea( const __m256 a /* a contains aabb itself, with min.xyz ne
 #define PROCESS_PLANE( a, pos, ANLR, lN, rN, lb, rb ) if (lN * rN != 0) { \
 	ANLR = halfArea( lb ) * (float)lN + halfArea( rb ) * (float)rN; if (ANLR < splitCost) \
 	splitCost = ANLR, bestAxis = a, bestPos = pos, bestLBox = lb, bestRBox = rb; }
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
 #pragma warning ( push )
 #pragma warning( disable:4701 ) // "potentially uninitialized local variable 'bestLBox' used"
+#elif defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 #endif
 void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 {
@@ -635,8 +638,10 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 		if (taskCount == 0) break; else nodeIdx = task[--taskCount];
 	}
 }
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
 #pragma warning ( pop ) // restore 4701
+#elif defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop // restore -Wmaybe-uninitialized
 #endif
 
 #endif
