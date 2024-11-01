@@ -21,6 +21,10 @@ The single-source sample ASCII test renderer can be compiled with
 
 ````g++ -std=c++20 -mavx tiny_bvh_renderer.cpp -o tiny_bvh_renderer````
 
+The cross-platform fenster-based single-source bitmap renderer can be compiled with
+
+````g++ -std=c++20 -mavx tiny_bvh_fenster.cpp -o tiny_bvh_fenster````
+
 Thanks to Eddy L. O. Jansson for help with g++ and clang.
 
 # Version
