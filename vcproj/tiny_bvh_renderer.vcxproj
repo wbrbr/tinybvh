@@ -19,16 +19,16 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="tiny_bvh.h" />
+    <ClInclude Include="..\tiny_bvh.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="tiny_bvh_test.cpp" />
+    <ClCompile Include="..\tiny_bvh_renderer.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{0b5c86b2-9438-49e3-bf1a-4e1593bb436d}</ProjectGuid>
-    <RootNamespace>tinybvhtest</RootNamespace>
+    <ProjectGuid>{103715f7-8e20-4058-b18c-caf6e36f23b2}</ProjectGuid>
+    <RootNamespace>tinybvhrenderer</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -110,7 +110,6 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>Default</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
