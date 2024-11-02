@@ -69,11 +69,11 @@ void Tick( uint32_t* buf )
 		for (int s = 0; s < 16; s++, i++) if (rays[i].hit.t < 1000)
 		{
 			int primIdx = rays[i].hit.prim;
-			bvhvec3 v0 = *(bvhvec3*)&triangles[primIdx * 3 + 0];
-			bvhvec3 v1 = *(bvhvec3*)&triangles[primIdx * 3 + 1];
-			bvhvec3 v2 = *(bvhvec3*)&triangles[primIdx * 3 + 2];
-			bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
-			avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
+			bvhvec3 v0 = triangles[primIdx * 3 + 0];
+			bvhvec3 v1 = triangles[primIdx * 3 + 1];
+			bvhvec3 v2 = triangles[primIdx * 3 + 2];
+			bvhvec3 UN = normalize( cross( v1 - v0, v2 - v0 ) );
+			avg += fabs( dot( UN, normalize( bvhvec3( 1, 2, 3 ) ) ) );
 		}
 		int c = (int)(15.9f * avg);
 		buf[x + y * SCRWIDTH] = c + (c << 8) + (c << 16);
