@@ -6,7 +6,7 @@
 using namespace tinybvh;
 
 bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
-int verts = 0, spheres = 0;
+int verts = 0;
 BVH bvh;
 
 void sphere_flake( float x, float y, float z, float s, int d = 0 )
@@ -23,7 +23,6 @@ void sphere_flake( float x, float y, float z, float s, int d = 0 )
 			triangles[verts++] = p[i], triangles[verts++] = p[i + 8],
 			triangles[verts++] = p[i + 1], triangles[verts++] = p[i + 1],
 			triangles[verts++] = p[i + 9], triangles[verts++] = p[i + 8];
-	spheres++;
 	if (d < 3) sphere_flake( x + s * 1.55f, y, z, s * 0.5f, d + 1 );
 	if (d < 3) sphere_flake( x - s * 1.5f, y, z, s * 0.5f, d + 1 );
 	if (d < 3) sphere_flake( x, y + s * 1.5f, z, s * 0.5f, d + 1 );
@@ -48,12 +47,12 @@ void Tick( uint32_t* buf )
 	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
 	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
 	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
-	// store primary rays in a buffer
+	// generate primary rays in a buffer
 	int N = 0;
 	Ray* rays = new Ray[SCRWIDTH * SCRHEIGHT * 16];
 	for (int y = 0; y < SCRHEIGHT; y++) for (int x = 0; x < SCRWIDTH; x++)
 	{
-		for (int s = 0; s < 16; s++)
+		for (int s = 0; s < 16; s++) // 16 samples per pixel
 		{
 			float u = (float)(x * 4 + (s & 3)) / (SCRWIDTH * 4);
 			float v = (float)(y * 4 + (s >> 2)) / (SCRHEIGHT * 4);
@@ -61,7 +60,7 @@ void Tick( uint32_t* buf )
 			rays[N++] = Ray( eye, normalize( P - eye ) );
 		}
 	}
-	// trace rays
+	// trace primary rays
 	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 	// visualize result
 	for (int i = 0, y = 0; y < SCRHEIGHT; y++) for (int x = 0; x < SCRWIDTH; x++)
