@@ -17,17 +17,17 @@ The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look
 
 ````g++ -std=c++20 -mavx tiny_bvh_test.cpp -o tiny_bvh_test````
 
-The single-source sample ASCII test renderer can be compiled with
+The single-source sample **ASCII test renderer** can be compiled with
 
 ````g++ -std=c++20 -mavx tiny_bvh_renderer.cpp -o tiny_bvh_renderer````
 
-The cross-platform fenster-based single-source bitmap renderer can be compiled with
+The cross-platform fenster-based single-source **bitmap renderer** can be compiled with
 
 ````g++ -std=c++20 -mavx -mwindows -O3 tiny_bvh_fenster.cpp -o tiny_bvh_fenster```` (on windows)
 
 ```g++ -std=c++20 -mavx -O3 -framework Cocoa tiny_bvh_fenster.cpp -o tiny_bvh_fenster``` (on macOS)
 
-The performance measurements use OpenMP and can be compiled with:
+The **performance measurement tool** use OpenMP and can be compiled with:
 
 ````g++ -std=c++20 -mavx -Ofast -fopenmp tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
