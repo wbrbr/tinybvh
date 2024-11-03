@@ -25,6 +25,8 @@ The cross-platform fenster-based single-source bitmap renderer can be compiled w
 
 ````g++ -std=c++20 -mavx -mwindows -O3 tiny_bvh_fenster.cpp -o tiny_bvh_fenster```` (on windows)
 
+```g++ -std=c++20 -mavx -O3 -framework Cocoa tiny_bvh_fenster.cpp -o tiny_bvh_fenster``` (on macOS)
+
 # Version
 The current version of the library is a 'prototype'; please expect changes to the interface. Once the interface has settled, more functionality will follow. Plans:
 * Spatial Splits (SBVH)
