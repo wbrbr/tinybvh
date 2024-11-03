@@ -70,6 +70,10 @@ THE SOFTWARE.
 #define BVH_USEAVX
 #endif
 
+// library version
+#define TINY_BVH_VERSION_MAJOR	0
+#define TINY_BVH_VERSION_MINOR	2
+
 // ============================================================================
 //
 //        P R E L I M I N A R I E S

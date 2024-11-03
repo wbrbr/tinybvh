@@ -42,11 +42,13 @@ void Init()
 
 void Tick( uint32_t* buf )
 {
-	// setup camera
+	// setup view pyramid for a pinhole camera: 
+	// eye, p1 (top-left), p2 (top-right) and p3 (bottom-left)
 	bvhvec3 eye( -3.5f, -1.5f, -6.5f ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
 	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
 	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
 	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
+
 	// generate primary rays in a buffer
 	int N = 0;
 	Ray* rays = new Ray[SCRWIDTH * SCRHEIGHT * 16];
@@ -60,8 +62,10 @@ void Tick( uint32_t* buf )
 			rays[N++] = Ray( eye, normalize( P - eye ) );
 		}
 	}
+	
 	// trace primary rays
 	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
+	
 	// visualize result
 	for (int i = 0, y = 0; y < SCRHEIGHT; y++) for (int x = 0; x < SCRWIDTH; x++)
 	{
@@ -69,9 +73,9 @@ void Tick( uint32_t* buf )
 		for (int s = 0; s < 16; s++, i++) if (rays[i].hit.t < 1000)
 		{
 			int primIdx = rays[i].hit.prim;
-			bvhvec3 v0 = *(bvhvec3*)&triangles[primIdx * 3 + 0];
-			bvhvec3 v1 = *(bvhvec3*)&triangles[primIdx * 3 + 1];
-			bvhvec3 v2 = *(bvhvec3*)&triangles[primIdx * 3 + 2];
+			bvhvec3 v0 = triangles[primIdx * 3 + 0];
+			bvhvec3 v1 = triangles[primIdx * 3 + 1];
+			bvhvec3 v2 = triangles[primIdx * 3 + 2];
 			bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
 			avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
 		}
