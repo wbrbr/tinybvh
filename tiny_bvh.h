@@ -723,6 +723,7 @@ int BVH::Intersect( Ray& ray ) const
 // of memory transfers over the rays in the bundle.
 // Note that this basic implementation assumes a specific layout of the rays. Provided
 // as 'proof of concept', should not be used in production code.
+// Based on Large Ray Packets for Real-time Whitted Ray Tracing, Overbeck et al., 2008.
 void BVH::Intersect256Rays( Ray* packet ) const
 {
 	// Corner rays are: 0, 51, 204 and 255
