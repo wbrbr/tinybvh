@@ -320,6 +320,7 @@ public:
 	void BuildAVX( const bvhvec4* vertices, const unsigned int primCount );
 	void Refit();
 	int Intersect( Ray& ray ) const;
+	void Intersect256Rays( Ray* first ) const;
 private:
 	void IntersectTri( Ray& ray, const unsigned int triIdx ) const;
 	static float IntersectAABB( const Ray& ray, const bvhvec3& aabbMin, const bvhvec3& aabbMax );
@@ -715,6 +716,107 @@ int BVH::Intersect( Ray& ray ) const
 		}
 	}
 	return steps;
+}
+
+// Intersect a BVH with a ray packet.
+// The 256 rays travel together to better utilize the caches and to amortize the cost 
+// of memory transfers over the rays in the bundle.
+// Note that this basic implementation assumes a specific layout of the rays. Provided
+// as 'proof of concept', should not be used in production code.
+void BVH::Intersect256Rays( Ray* packet ) const
+{
+	// Corner rays are: 0, 51, 204 and 255
+	// Construct the bounding planes, with normals pointing outwards
+	bvhvec3 O = packet[0].O; // same for all rays in this case
+	bvhvec3 p0 = packet[0].O + packet[0].D; // top-left
+	bvhvec3 p1 = packet[51].O + packet[51].D; // top-right
+	bvhvec3 p2 = packet[204].O + packet[204].D; // bottom-left
+	bvhvec3 p3 = packet[255].O + packet[255].D; // bottom-right
+	bvhvec3 plane0 = normalize( cross( p0 - O, p0 - p2 ) ); // left plane
+	bvhvec3 plane1 = normalize( cross( p3 - O, p3 - p1 ) ); // right plane
+	bvhvec3 plane2 = normalize( cross( p1 - O, p1 - p0 ) ); // top plane
+	bvhvec3 plane3 = normalize( cross( p2 - O, p2 - p3 ) ); // bottom plane
+	float t0 = dot( O, plane0 ), t1 = dot( O, plane1 );
+	float t2 = dot( O, plane2 ), t3 = dot( O, plane3 );
+	// Traverse the tree with the packet
+	int first = 0, last = 255, tmp; // first and last active ray in the packet
+	BVHNode* node = &bvhNode[0], * stack[64];
+	unsigned int stackPtr = 0, firstLast[64];
+	while (1)
+	{
+		// 1. Early-in test: if first ray hits the node, the packet visits the node
+		bool earlyHit = IntersectAABB( packet[first], node->aabbMin, node->aabbMax ) < 1e30f;
+		// 2. Early-out test: if the node aabb is outside the four planes, we skip the node
+		if (!earlyHit)
+		{
+			const bvhvec3 bmin = node->aabbMin, bmax = node->aabbMax;
+			bvhvec3 p0( plane0.x < 0 ? bmax.x : bmin.x, plane0.y < 0 ? bmax.y : bmin.y, plane0.z < 0 ? bmax.z : bmin.z );
+			bvhvec3 p1( plane1.x < 0 ? bmax.x : bmin.x, plane1.y < 0 ? bmax.y : bmin.y, plane1.z < 0 ? bmax.z : bmin.z );
+			bvhvec3 p2( plane2.x < 0 ? bmax.x : bmin.x, plane2.y < 0 ? bmax.y : bmin.y, plane2.z < 0 ? bmax.z : bmin.z );
+			bvhvec3 p3( plane3.x < 0 ? bmax.x : bmin.x, plane3.y < 0 ? bmax.y : bmin.y, plane3.z < 0 ? bmax.z : bmin.z );
+			if (dot( p0, plane0 ) > t0 || dot( p1, plane1 ) > t1 || dot( p2, plane2 ) > t2 || dot( p3, plane3 ) > t3)
+			{
+				if (stackPtr == 0) break; else // pop
+					node = stack[--stackPtr], tmp = firstLast[stackPtr], 
+					first = tmp >> 8, last = tmp & 255;
+			}
+			else
+			{
+				// 3. Last resort: update first and last, stay in node if first > last
+				for( ; first <= last; first++ )
+					if (IntersectAABB( packet[first], node->aabbMin, node->aabbMax ) < 1e30f) break;
+				for( ; last >= first; last-- )
+					if (IntersectAABB( packet[last], node->aabbMin, node->aabbMax ) < 1e30f) break;
+			}
+		}
+		// process result
+		if (last >= first)
+		{
+			if (node->isLeaf())
+			{
+				for (unsigned int j = 0; j < node->triCount; j++) 
+				{
+					const unsigned int idx = triIdx[node->leftFirst + j];
+					const unsigned int vertIdx = idx * 3;
+					const bvhvec3 edge1 = verts[vertIdx + 1] - verts[vertIdx];
+					const bvhvec3 edge2 = verts[vertIdx + 2] - verts[vertIdx];
+					for( int i = first; i <= last; i++ )
+					{
+						// Moeller-Trumbore ray/triangle intersection algorithm
+						Ray& ray = packet[i];
+						const bvhvec3 h = cross( ray.D, edge2 );
+						const float a = dot( edge1, h );
+						if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
+						const float f = 1 / a;
+						const bvhvec3 s = ray.O - bvhvec3( verts[vertIdx] );
+						const float u = f * dot( s, h );
+						if (u < 0 || u > 1) continue;
+						const bvhvec3 q = cross( s, edge1 );
+						const float v = f * dot( ray.D, q );
+						if (v < 0 || u + v > 1) continue;
+						const float t = f * dot( edge2, q );
+						if (t > 0 && t < ray.hit.t)
+						{
+							// register a hit: ray is shortened to t
+							ray.hit.t = t, ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx;
+						}
+					}
+				}
+				if (stackPtr == 0) break; else // pop
+					node = stack[--stackPtr], tmp = firstLast[stackPtr], 
+					first = tmp >> 8, last = tmp & 255;
+			}
+			else
+			{
+				firstLast[stackPtr] = (first << 8) + last;
+				stack[stackPtr++] = &bvhNode[node->leftFirst + 1];
+				node = &bvhNode[node->leftFirst];
+			}
+		}
+		else if (stackPtr == 0) break; else // pop
+			node = stack[--stackPtr], tmp = firstLast[stackPtr], 
+			first = tmp >> 8, last = tmp & 255;
+	}
 }
 
 // IntersectTri

@@ -67,17 +67,23 @@ int main()
 	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
 	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
 
-	// generate primary rays in a cacheline-aligned buffer
+	// generate primary rays in a cacheline-aligned buffer - and, for data locality:
+	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
 	int N = 0;
 	Ray* rays = (Ray*)ALIGNED_MALLOC( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
-	for (int y = 0; y < SCRHEIGHT; y++) for (int x = 0; x < SCRWIDTH; x++)
+	for( int ty = 0; ty < SCRHEIGHT / 4; ty++ ) for( int tx = 0; tx < SCRWIDTH / 4; tx++ )
 	{
-		for (int s = 0; s < 16; s++) // 16 samples per pixel
+		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
 		{
-			float u = (float)(x * 4 + (s & 3)) / (SCRWIDTH * 4);
-			float v = (float)(y * 4 + (s >> 2)) / (SCRHEIGHT * 4);
-			bvhvec3 P = p1 + u * (p2 - p1) + v * (p3 - p1);
-			rays[N++] = Ray( eye, normalize( P - eye ) );
+			int pixel_x = tx * 4 + x;
+			int pixel_y = ty * 4 + y;
+			for (int s = 0; s < 16; s++) // 16 samples per pixel
+			{
+				float u = (float)(pixel_x * 4 + (s & 3)) / (SCRWIDTH * 4);
+				float v = (float)(pixel_y * 4 + (s >> 2)) / (SCRHEIGHT * 4);
+				bvhvec3 P = p1 + u * (p2 - p1) + v * (p3 - p1);
+				rays[N++] = Ray( eye, normalize( P - eye ) );
+			}
 		}
 	}
 
@@ -88,11 +94,14 @@ int main()
 	printf( "----------------------------------------------------------------\n" );
 
 	Timer t;
+	float mrays;
 
 	// measure single-core bvh construction time - warming caches
 	printf( "BVH construction speed\n" );
 	printf( "warming caches...\n" );
 	bvh.Build( (bvhvec4*)triangles, verts / 3 );
+
+#if 1
 
 	// measure single-core bvh construction time - reference builder
 	t.reset();
@@ -125,7 +134,7 @@ int main()
 	for (int pass = 0; pass < 3; pass++)
 		for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 	float traceTimeST = t.elapsed() / 3.0f;
-	float mrays = (float)N / traceTimeST;
+	mrays = (float)N / traceTimeST;
 	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeST * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 	// trace all rays three times to estimate average performance
@@ -146,7 +155,27 @@ int main()
 	mrays = (float)N / traceTimeMT;
 	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeMT * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
-	// shuffle rays for the next experiment
+#endif
+
+	// trace all rays three times to estimate average performance
+	// - coherent distribution, multi-core, packet traversal
+	t.reset();
+	printf( "- CPU, coherent, basic 2-way layout, MT, packets:  " );
+	for (int j = 0; j < 3; j++)
+	{
+		const int batchCount = N / (30 * 256); // batches of 30 packets of 256 rays
+	#pragma omp parallel for schedule(dynamic)
+		for (int batch = 0; batch < batchCount; batch++)
+		{
+			const int batchStart = batch * 30 * 256;
+			for (int i = 0; i < 30; i++) bvh.Intersect256Rays( rays + batchStart + i * 256 );
+		}
+	}
+	float traceTimeMTP = t.elapsed() / 3.0f;
+	mrays = (float)N / traceTimeMTP;
+	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeMTP * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+	// shuffle rays for the next experiment - TODO: replace by random bounce
 	for( int i = 0; i < N; i++ )
 	{
 		int j = (i + 17 * rand()) % N;

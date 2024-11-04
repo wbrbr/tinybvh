@@ -49,37 +49,53 @@ void Tick( uint32_t* buf )
 	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
 	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
 
-	// generate primary rays in a buffer
+	// generate primary rays in a cacheline-aligned buffer - and, for data locality:
+	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
 	int N = 0;
-	Ray* rays = new Ray[SCRWIDTH * SCRHEIGHT * 16];
-	for (int y = 0; y < SCRHEIGHT; y++) for (int x = 0; x < SCRWIDTH; x++)
+	Ray* rays = (Ray*)ALIGNED_MALLOC( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
+	for( int ty = 0; ty < SCRHEIGHT / 4; ty++ ) for( int tx = 0; tx < SCRWIDTH / 4; tx++ )
 	{
-		for (int s = 0; s < 16; s++) // 16 samples per pixel
+		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
 		{
-			float u = (float)(x * 4 + (s & 3)) / (SCRWIDTH * 4);
-			float v = (float)(y * 4 + (s >> 2)) / (SCRHEIGHT * 4);
-			bvhvec3 P = p1 + u * (p2 - p1) + v * (p3 - p1);
-			rays[N++] = Ray( eye, normalize( P - eye ) );
+			int pixel_x = tx * 4 + x;
+			int pixel_y = ty * 4 + y;
+			for (int s = 0; s < 16; s++) // 16 samples per pixel
+			{
+				float u = (float)(pixel_x * 4 + (s & 3)) / (SCRWIDTH * 4);
+				float v = (float)(pixel_y * 4 + (s >> 2)) / (SCRHEIGHT * 4);
+				bvhvec3 P = p1 + u * (p2 - p1) + v * (p3 - p1);
+				rays[N++] = Ray( eye, normalize( P - eye ) );
+			}
 		}
 	}
 	
 	// trace primary rays
+#if 1
+	const int packetCount = N / 256;
+	for (int i = 0; i < packetCount; i++) bvh.Intersect256Rays( rays + i * 256 );
+#else
 	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
+#endif
 	
 	// visualize result
-	for (int i = 0, y = 0; y < SCRHEIGHT; y++) for (int x = 0; x < SCRWIDTH; x++)
+	for( int i = 0, ty = 0; ty < SCRHEIGHT / 4; ty++ ) for( int tx = 0; tx < SCRWIDTH / 4; tx++ )
 	{
-		float avg = 0;
-		for (int s = 0; s < 16; s++, i++) if (rays[i].hit.t < 1000)
+		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
 		{
-			int primIdx = rays[i].hit.prim;
-			bvhvec3 v0 = triangles[primIdx * 3 + 0];
-			bvhvec3 v1 = triangles[primIdx * 3 + 1];
-			bvhvec3 v2 = triangles[primIdx * 3 + 2];
-			bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
-			avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
+			int pixel_x = tx * 4 + x;
+			int pixel_y = ty * 4 + y;
+			float avg = 0;
+			for (int s = 0; s < 16; s++, i++) if (rays[i].hit.t < 1000)
+			{
+				int primIdx = rays[i].hit.prim;
+				bvhvec3 v0 = triangles[primIdx * 3 + 0];
+				bvhvec3 v1 = triangles[primIdx * 3 + 1];
+				bvhvec3 v2 = triangles[primIdx * 3 + 2];
+				bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
+				avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
+			}
+			int c = (int)(15.9f * avg);
+			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
 		}
-		int c = (int)(15.9f * avg);
-		buf[x + y * SCRWIDTH] = c + (c << 8) + (c << 16);
 	}
 }
