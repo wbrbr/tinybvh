@@ -12,6 +12,14 @@
 #define SCRWIDTH	800
 #define SCRHEIGHT	600
 
+// tests to perform
+#define BUILD_REFERENCE
+#define BUILD_AVX
+#define TRAVERSE_2WAY_ST
+#define TRAVERSE_2WAY_MT
+#define TRAVERSE_2WAY_MT_PACKET
+#define TRAVERSE_2WAY_MT_DIVERGENT
+
 using namespace tinybvh;
 
 bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
@@ -101,7 +109,7 @@ int main()
 	printf( "warming caches...\n" );
 	bvh.Build( (bvhvec4*)triangles, verts / 3 );
 
-#if 1
+#ifdef BUILD_REFERENCE
 
 	// measure single-core bvh construction time - reference builder
 	t.reset();
@@ -112,6 +120,9 @@ int main()
 	printf( "%.2fms for %i triangles ", buildTime * 1000.0f, verts / 3 );
 	printf( "- %i nodes, SAH=%.2f\n", bvh.newNodePtr, bvh.SAHCost() );
 
+#endif
+
+#ifdef BUILD_AVX
 #ifdef BVH_USEAVX
 	// measure single-core bvh construction time - AVX builder
 	t.reset();
@@ -121,11 +132,14 @@ int main()
 	printf( "%.2fms for %i triangles ", buildTimeAVX * 1000.0f, verts / 3 );
 	printf( "- %i nodes, SAH=%.2f\n", bvh.newNodePtr, bvh.SAHCost() );
 #endif
+#endif
 
 	// trace all rays once to warm the caches
 	printf( "BVH traversal speed\n" );
 	printf( "warming caches...\n" );
 	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
+
+#ifdef TRAVERSE_2WAY_ST
 
 	// trace all rays three times to estimate average performance
 	// - single core version
@@ -136,6 +150,10 @@ int main()
 	float traceTimeST = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeST;
 	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeST * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
+
+#ifdef TRAVERSE_2WAY_MT
 
 	// trace all rays three times to estimate average performance
 	// - multi-core version (using OpenMP and batches of 10,000 rays)
@@ -157,6 +175,8 @@ int main()
 
 #endif
 
+#ifdef TRAVERSE_2WAY_MT_PACKET
+
 	// trace all rays three times to estimate average performance
 	// - coherent distribution, multi-core, packet traversal
 	t.reset();
@@ -174,6 +194,10 @@ int main()
 	float traceTimeMTP = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeMTP;
 	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeMTP * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
+
+#ifdef TRAVERSE_2WAY_MT_DIVERGENT
 
 	// shuffle rays for the next experiment - TODO: replace by random bounce
 	for( int i = 0; i < N; i++ )
@@ -201,6 +225,8 @@ int main()
 	float traceTimeMTI = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeMTI;
 	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeMTI * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
 
 	// all done.
 	return 0;

@@ -737,37 +737,75 @@ void BVH::Intersect256Rays( Ray* packet ) const
 	bvhvec3 plane1 = normalize( cross( p3 - O, p3 - p1 ) ); // right plane
 	bvhvec3 plane2 = normalize( cross( p1 - O, p1 - p0 ) ); // top plane
 	bvhvec3 plane3 = normalize( cross( p2 - O, p2 - p3 ) ); // bottom plane
+	int sign0x = plane0.x < 0 ? 4 : 0, sign0y = plane0.y < 0 ? 5 : 1, sign0z = plane0.z < 0 ? 6 : 2;
+	int sign1x = plane1.x < 0 ? 4 : 0, sign1y = plane1.y < 0 ? 5 : 1, sign1z = plane1.z < 0 ? 6 : 2;
+	int sign2x = plane2.x < 0 ? 4 : 0, sign2y = plane2.y < 0 ? 5 : 1, sign2z = plane2.z < 0 ? 6 : 2;
+	int sign3x = plane3.x < 0 ? 4 : 0, sign3y = plane3.y < 0 ? 5 : 1, sign3z = plane3.z < 0 ? 6 : 2;
 	float t0 = dot( O, plane0 ), t1 = dot( O, plane1 );
 	float t2 = dot( O, plane2 ), t3 = dot( O, plane3 );
 	// Traverse the tree with the packet
-	int first = 0, last = 255, tmp; // first and last active ray in the packet
-	BVHNode* node = &bvhNode[0], * stack[64];
-	unsigned int stackPtr = 0, firstLast[64];
+	int first = 0, last = 255; // first and last active ray in the packet
+	BVHNode* node = &bvhNode[0];
+	ALIGNED(64) unsigned int stack[64], stackPtr = 0;
 	while (1)
 	{
+		const float ox1 = node->aabbMin.x - O.x, ox2 = node->aabbMax.x - O.x;
+		const float oy1 = node->aabbMin.y - O.y, oy2 = node->aabbMax.y - O.y;
+		const float oz1 = node->aabbMin.z - O.z, oz2 = node->aabbMax.z - O.z;
 		// 1. Early-in test: if first ray hits the node, the packet visits the node
-		bool earlyHit = IntersectAABB( packet[first], node->aabbMin, node->aabbMax ) < 1e30f;
+		const bvhvec3 rD = packet[first].rD;
+		const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x;
+		float tmin = tinybvh_min( tx1, tx2 ), tmax = tinybvh_max( tx1, tx2 );
+		const float ty1 = oy1 * rD.y, ty2 = oy2 * rD.y;
+		tmin = tinybvh_max( tmin, tinybvh_min( ty1, ty2 ) );
+		tmax = tinybvh_min( tmax, tinybvh_max( ty1, ty2 ) );
+		const float tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
+		tmin = tinybvh_max( tmin, tinybvh_min( tz1, tz2 ) );
+		tmax = tinybvh_min( tmax, tinybvh_max( tz1, tz2 ) );
+		const bool earlyHit = (tmax >= tmin && tmin < packet[first].hit.t && tmax >= 0);
 		// 2. Early-out test: if the node aabb is outside the four planes, we skip the node
 		if (!earlyHit)
 		{
-			const bvhvec3 bmin = node->aabbMin, bmax = node->aabbMax;
-			bvhvec3 p0( plane0.x < 0 ? bmax.x : bmin.x, plane0.y < 0 ? bmax.y : bmin.y, plane0.z < 0 ? bmax.z : bmin.z );
-			bvhvec3 p1( plane1.x < 0 ? bmax.x : bmin.x, plane1.y < 0 ? bmax.y : bmin.y, plane1.z < 0 ? bmax.z : bmin.z );
-			bvhvec3 p2( plane2.x < 0 ? bmax.x : bmin.x, plane2.y < 0 ? bmax.y : bmin.y, plane2.z < 0 ? bmax.z : bmin.z );
-			bvhvec3 p3( plane3.x < 0 ? bmax.x : bmin.x, plane3.y < 0 ? bmax.y : bmin.y, plane3.z < 0 ? bmax.z : bmin.z );
+			float* minmax = (float*)node;
+			bvhvec3 p0( minmax[sign0x], minmax[sign0y], minmax[sign0z] );
+			bvhvec3 p1( minmax[sign1x], minmax[sign1y], minmax[sign1z] );
+			bvhvec3 p2( minmax[sign2x], minmax[sign2y], minmax[sign2z] );
+			bvhvec3 p3( minmax[sign3x], minmax[sign3y], minmax[sign3z] );
 			if (dot( p0, plane0 ) > t0 || dot( p1, plane1 ) > t1 || dot( p2, plane2 ) > t2 || dot( p3, plane3 ) > t3)
 			{
 				if (stackPtr == 0) break; else // pop
-					node = stack[--stackPtr], tmp = firstLast[stackPtr], 
-					first = tmp >> 8, last = tmp & 255;
+					last = stack[--stackPtr], node = bvhNode + stack[--stackPtr], 
+					first = last >> 8, last &= 255;
 			}
 			else
 			{
 				// 3. Last resort: update first and last, stay in node if first > last
 				for( ; first <= last; first++ )
-					if (IntersectAABB( packet[first], node->aabbMin, node->aabbMax ) < 1e30f) break;
+				{
+					const bvhvec3 rD = packet[first].rD;
+					const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x;
+					float tmin = tinybvh_min( tx1, tx2 ), tmax = tinybvh_max( tx1, tx2 );
+					const float ty1 = oy1 * rD.y, ty2 = oy2 * rD.y;
+					tmin = tinybvh_max( tmin, tinybvh_min( ty1, ty2 ) );
+					tmax = tinybvh_min( tmax, tinybvh_max( ty1, ty2 ) );
+					const float tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
+					tmin = tinybvh_max( tmin, tinybvh_min( tz1, tz2 ) );
+					tmax = tinybvh_min( tmax, tinybvh_max( tz1, tz2 ) );
+					if (tmax >= tmin && tmin < packet[first].hit.t && tmax >= 0) break;
+				}
 				for( ; last >= first; last-- )
-					if (IntersectAABB( packet[last], node->aabbMin, node->aabbMax ) < 1e30f) break;
+				{
+					const bvhvec3 rD = packet[last].rD;
+					const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x;
+					float tmin = tinybvh_min( tx1, tx2 ), tmax = tinybvh_max( tx1, tx2 );
+					const float ty1 = oy1 * rD.y, ty2 = oy2 * rD.y;
+					tmin = tinybvh_max( tmin, tinybvh_min( ty1, ty2 ) );
+					tmax = tinybvh_min( tmax, tinybvh_max( ty1, ty2 ) );
+					const float tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
+					tmin = tinybvh_max( tmin, tinybvh_min( tz1, tz2 ) );
+					tmax = tinybvh_min( tmax, tinybvh_max( tz1, tz2 ) );
+					if (tmax >= tmin && tmin < packet[last].hit.t && tmax >= 0) break;
+				}
 			}
 		}
 		// process result
@@ -781,6 +819,7 @@ void BVH::Intersect256Rays( Ray* packet ) const
 					const unsigned int vertIdx = idx * 3;
 					const bvhvec3 edge1 = verts[vertIdx + 1] - verts[vertIdx];
 					const bvhvec3 edge2 = verts[vertIdx + 2] - verts[vertIdx];
+					const bvhvec3 s = O - bvhvec3( verts[vertIdx] );
 					for( int i = first; i <= last; i++ )
 					{
 						// Moeller-Trumbore ray/triangle intersection algorithm
@@ -789,7 +828,6 @@ void BVH::Intersect256Rays( Ray* packet ) const
 						const float a = dot( edge1, h );
 						if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
 						const float f = 1 / a;
-						const bvhvec3 s = ray.O - bvhvec3( verts[vertIdx] );
 						const float u = f * dot( s, h );
 						if (u < 0 || u > 1) continue;
 						const bvhvec3 q = cross( s, edge1 );
@@ -804,19 +842,19 @@ void BVH::Intersect256Rays( Ray* packet ) const
 					}
 				}
 				if (stackPtr == 0) break; else // pop
-					node = stack[--stackPtr], tmp = firstLast[stackPtr], 
-					first = tmp >> 8, last = tmp & 255;
+					last = stack[--stackPtr], node = bvhNode + stack[--stackPtr], 
+					first = last >> 8, last &= 255;
 			}
 			else
 			{
-				firstLast[stackPtr] = (first << 8) + last;
-				stack[stackPtr++] = &bvhNode[node->leftFirst + 1];
+				stack[stackPtr++] = node->leftFirst + 1;
+				stack[stackPtr++] = (first << 8) + last;
 				node = &bvhNode[node->leftFirst];
 			}
 		}
 		else if (stackPtr == 0) break; else // pop
-			node = stack[--stackPtr], tmp = firstLast[stackPtr], 
-			first = tmp >> 8, last = tmp & 255;
+			last = stack[--stackPtr], node = bvhNode + stack[--stackPtr], 
+			first = last >> 8, last &= 255;
 	}
 }
 
