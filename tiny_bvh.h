@@ -723,7 +723,8 @@ int BVH::Intersect( Ray& ray ) const
 // of memory transfers over the rays in the bundle.
 // Note that this basic implementation assumes a specific layout of the rays. Provided
 // as 'proof of concept', should not be used in production code.
-// Based on Large Ray Packets for Real-time Whitted Ray Tracing, Overbeck et al., 2008.
+// Based on Large Ray Packets for Real-time Whitted Ray Tracing, Overbeck et al., 2008,
+// extended with sorted traversal and reduced stack traffic.
 void BVH::Intersect256Rays( Ray* packet ) const
 {
 	// Corner rays are: 0, 51, 204 and 255
@@ -749,112 +750,158 @@ void BVH::Intersect256Rays( Ray* packet ) const
 	ALIGNED(64) unsigned int stack[64], stackPtr = 0;
 	while (1)
 	{
-		const float ox1 = node->aabbMin.x - O.x, ox2 = node->aabbMax.x - O.x;
-		const float oy1 = node->aabbMin.y - O.y, oy2 = node->aabbMax.y - O.y;
-		const float oz1 = node->aabbMin.z - O.z, oz2 = node->aabbMax.z - O.z;
-		// 1. Early-in test: if first ray hits the node, the packet visits the node
-		const bvhvec3 rD = packet[first].rD;
-		const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x;
-		float tmin = tinybvh_min( tx1, tx2 ), tmax = tinybvh_max( tx1, tx2 );
-		const float ty1 = oy1 * rD.y, ty2 = oy2 * rD.y;
-		tmin = tinybvh_max( tmin, tinybvh_min( ty1, ty2 ) );
-		tmax = tinybvh_min( tmax, tinybvh_max( ty1, ty2 ) );
-		const float tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
-		tmin = tinybvh_max( tmin, tinybvh_min( tz1, tz2 ) );
-		tmax = tinybvh_min( tmax, tinybvh_max( tz1, tz2 ) );
-		const bool earlyHit = (tmax >= tmin && tmin < packet[first].hit.t && tmax >= 0);
-		// 2. Early-out test: if the node aabb is outside the four planes, we skip the node
-		if (!earlyHit)
+		if (node->isLeaf())
 		{
-			float* minmax = (float*)node;
-			bvhvec3 p0( minmax[sign0x], minmax[sign0y], minmax[sign0z] );
-			bvhvec3 p1( minmax[sign1x], minmax[sign1y], minmax[sign1z] );
-			bvhvec3 p2( minmax[sign2x], minmax[sign2y], minmax[sign2z] );
-			bvhvec3 p3( minmax[sign3x], minmax[sign3y], minmax[sign3z] );
-			if (dot( p0, plane0 ) > t0 || dot( p1, plane1 ) > t1 || dot( p2, plane2 ) > t2 || dot( p3, plane3 ) > t3)
+			// handle leaf node
+			for (unsigned int j = 0; j < node->triCount; j++) 
 			{
-				if (stackPtr == 0) break; else // pop
-					last = stack[--stackPtr], node = bvhNode + stack[--stackPtr], 
-					first = last >> 8, last &= 255;
-			}
-			else
-			{
-				// 3. Last resort: update first and last, stay in node if first > last
-				for( ; first <= last; first++ )
+				const unsigned int idx = triIdx[node->leftFirst + j], vid = idx * 3;
+				const bvhvec3 edge1 = verts[vid + 1] - verts[vid], edge2 = verts[vid + 2] - verts[vid];
+				const bvhvec3 s = O - bvhvec3( verts[vid] );
+				for( int i = first; i <= last; i++ )
 				{
-					const bvhvec3 rD = packet[first].rD;
-					const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x;
-					float tmin = tinybvh_min( tx1, tx2 ), tmax = tinybvh_max( tx1, tx2 );
-					const float ty1 = oy1 * rD.y, ty2 = oy2 * rD.y;
-					tmin = tinybvh_max( tmin, tinybvh_min( ty1, ty2 ) );
-					tmax = tinybvh_min( tmax, tinybvh_max( ty1, ty2 ) );
-					const float tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
-					tmin = tinybvh_max( tmin, tinybvh_min( tz1, tz2 ) );
-					tmax = tinybvh_min( tmax, tinybvh_max( tz1, tz2 ) );
-					if (tmax >= tmin && tmin < packet[first].hit.t && tmax >= 0) break;
-				}
-				for( ; last >= first; last-- )
-				{
-					const bvhvec3 rD = packet[last].rD;
-					const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x;
-					float tmin = tinybvh_min( tx1, tx2 ), tmax = tinybvh_max( tx1, tx2 );
-					const float ty1 = oy1 * rD.y, ty2 = oy2 * rD.y;
-					tmin = tinybvh_max( tmin, tinybvh_min( ty1, ty2 ) );
-					tmax = tinybvh_min( tmax, tinybvh_max( ty1, ty2 ) );
-					const float tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
-					tmin = tinybvh_max( tmin, tinybvh_min( tz1, tz2 ) );
-					tmax = tinybvh_min( tmax, tinybvh_max( tz1, tz2 ) );
-					if (tmax >= tmin && tmin < packet[last].hit.t && tmax >= 0) break;
+					Ray& ray = packet[i];
+					const bvhvec3 h = cross( ray.D, edge2 );
+					const float a = dot( edge1, h );
+					if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
+					const float f = 1 / a, u = f * dot( s, h );
+					if (u < 0 || u > 1) continue;
+					const bvhvec3 q = cross( s, edge1 );
+					const float v = f * dot( ray.D, q );
+					if (v < 0 || u + v > 1) continue;
+					const float t = f * dot( edge2, q );
+					if (t <= 0 || t >= ray.hit.t) continue;
+					ray.hit.t = t, ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx;
 				}
 			}
+			if (stackPtr == 0) break; else // pop
+				last = stack[--stackPtr], node = bvhNode + stack[--stackPtr], 
+				first = last >> 8, last &= 255;
 		}
-		// process result
-		if (last >= first)
+		else
 		{
-			if (node->isLeaf())
+			// fetch pointers to child nodes
+			BVHNode* left = bvhNode + node->leftFirst;
+			BVHNode* right = bvhNode + node->leftFirst + 1;
+			bool visitLeft = true, visitRight = true;
+			int leftFirst = first, leftLast = last, rightFirst = first, rightLast = last;
+			float distLeft, distRight;
 			{
-				for (unsigned int j = 0; j < node->triCount; j++) 
+				// see if we want to intersect the left child
+				const float ox1 = left->aabbMin.x - O.x, ox2 = left->aabbMax.x - O.x;
+				const float oy1 = left->aabbMin.y - O.y, oy2 = left->aabbMax.y - O.y;
+				const float oz1 = left->aabbMin.z - O.z, oz2 = left->aabbMax.z - O.z;
+				// 1. Early-in test: if first ray hits the node, the packet visits the node
+				const bvhvec3 rD = packet[first].rD;
+				const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
+				const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
+				const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+				const bool earlyHit = (tmax >= tmin && tmin < packet[first].hit.t && tmax >= 0);
+				distLeft = tmin;
+				// 2. Early-out test: if the node aabb is outside the four planes, we skip the node
+				if (!earlyHit)
 				{
-					const unsigned int idx = triIdx[node->leftFirst + j];
-					const unsigned int vertIdx = idx * 3;
-					const bvhvec3 edge1 = verts[vertIdx + 1] - verts[vertIdx];
-					const bvhvec3 edge2 = verts[vertIdx + 2] - verts[vertIdx];
-					const bvhvec3 s = O - bvhvec3( verts[vertIdx] );
-					for( int i = first; i <= last; i++ )
+					float* minmax = (float*)left;
+					bvhvec3 p0( minmax[sign0x], minmax[sign0y], minmax[sign0z] );
+					bvhvec3 p1( minmax[sign1x], minmax[sign1y], minmax[sign1z] );
+					bvhvec3 p2( minmax[sign2x], minmax[sign2y], minmax[sign2z] );
+					bvhvec3 p3( minmax[sign3x], minmax[sign3y], minmax[sign3z] );
+					if (dot( p0, plane0 ) > t0 || dot( p1, plane1 ) > t1 || dot( p2, plane2 ) > t2 || dot( p3, plane3 ) > t3)
+						visitLeft = false;
+					else
 					{
-						// Moeller-Trumbore ray/triangle intersection algorithm
-						Ray& ray = packet[i];
-						const bvhvec3 h = cross( ray.D, edge2 );
-						const float a = dot( edge1, h );
-						if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
-						const float f = 1 / a;
-						const float u = f * dot( s, h );
-						if (u < 0 || u > 1) continue;
-						const bvhvec3 q = cross( s, edge1 );
-						const float v = f * dot( ray.D, q );
-						if (v < 0 || u + v > 1) continue;
-						const float t = f * dot( edge2, q );
-						if (t > 0 && t < ray.hit.t)
+						// 3. Last resort: update first and last, stay in node if first > last
+						for( ; leftFirst <= leftLast; leftFirst++ )
 						{
-							// register a hit: ray is shortened to t
-							ray.hit.t = t, ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx;
+							const bvhvec3 rD = packet[leftFirst].rD;
+							const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
+							const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
+							const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+							if (tmax >= tmin && tmin < packet[leftFirst].hit.t && tmax >= 0) { distLeft = tmin; break; }
 						}
+						for( ; leftLast >= leftFirst; leftLast-- )
+						{
+							const bvhvec3 rD = packet[leftLast].rD;
+							const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
+							const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
+							const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+							if (tmax >= tmin && tmin < packet[leftLast].hit.t && tmax >= 0) break;
+						}
+						visitLeft = leftLast >= leftFirst;
 					}
 				}
-				if (stackPtr == 0) break; else // pop
-					last = stack[--stackPtr], node = bvhNode + stack[--stackPtr], 
-					first = last >> 8, last &= 255;
 			}
-			else
 			{
-				stack[stackPtr++] = node->leftFirst + 1;
-				stack[stackPtr++] = (first << 8) + last;
-				node = &bvhNode[node->leftFirst];
+				// see if we want to intersect the right child
+				const float ox1 = right->aabbMin.x - O.x, ox2 = right->aabbMax.x - O.x;
+				const float oy1 = right->aabbMin.y - O.y, oy2 = right->aabbMax.y - O.y;
+				const float oz1 = right->aabbMin.z - O.z, oz2 = right->aabbMax.z - O.z;
+				// 1. Early-in test: if first ray hits the node, the packet visits the node
+				const bvhvec3 rD = packet[first].rD;
+				const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
+				const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
+				const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+				const bool earlyHit = (tmax >= tmin && tmin < packet[first].hit.t && tmax >= 0);
+				distRight = tmin;
+				// 2. Early-out test: if the node aabb is outside the four planes, we skip the node
+				if (!earlyHit)
+				{
+					float* minmax = (float*)right;
+					bvhvec3 p0( minmax[sign0x], minmax[sign0y], minmax[sign0z] );
+					bvhvec3 p1( minmax[sign1x], minmax[sign1y], minmax[sign1z] );
+					bvhvec3 p2( minmax[sign2x], minmax[sign2y], minmax[sign2z] );
+					bvhvec3 p3( minmax[sign3x], minmax[sign3y], minmax[sign3z] );
+					if (dot( p0, plane0 ) > t0 || dot( p1, plane1 ) > t1 || dot( p2, plane2 ) > t2 || dot( p3, plane3 ) > t3)
+						visitRight = false;
+					else
+					{
+						// 3. Last resort: update first and last, stay in node if first > last
+						for( ; rightFirst <= rightLast; rightFirst++ )
+						{
+							const bvhvec3 rD = packet[rightFirst].rD;
+							const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
+							const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
+							const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+							if (tmax >= tmin && tmin < packet[rightFirst].hit.t && tmax >= 0) { distRight = tmin; break; }
+						}
+						for( ; rightLast >= first; rightLast-- )
+						{
+							const bvhvec3 rD = packet[rightLast].rD;
+							const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
+							const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
+							const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+							if (tmax >= tmin && tmin < packet[rightLast].hit.t && tmax >= 0) break;
+						}
+						visitRight = rightLast >= rightFirst;
+					}
+				}
 			}
+			// process intersection result
+			if (visitLeft && visitRight)
+			{
+				if (distLeft < distRight)
+				{
+					// push right, continue with left
+					stack[stackPtr++] = node->leftFirst + 1;
+					stack[stackPtr++] = (rightFirst << 8) + rightLast;
+					node = left, first = leftFirst, last = leftLast;
+				}
+				else
+				{
+					// push left, continue with right
+					stack[stackPtr++] = node->leftFirst;
+					stack[stackPtr++] = (leftFirst << 8) + leftLast;
+					node = right, first = rightFirst, last = rightLast;
+				}
+			}
+			else if (visitLeft) // continue with left
+				node = left, first = leftFirst, last = leftLast;
+			else if (visitRight) // continue with right
+				node = right, first = rightFirst, last = rightLast;
+			else if (stackPtr == 0) break; else // pop
+				last = stack[--stackPtr], node = bvhNode + stack[--stackPtr], 
+				first = last >> 8, last &= 255;
 		}
-		else if (stackPtr == 0) break; else // pop
-			last = stack[--stackPtr], node = bvhNode + stack[--stackPtr], 
-			first = last >> 8, last &= 255;
 	}
 }
 
