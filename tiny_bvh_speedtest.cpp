@@ -13,9 +13,9 @@
 #define SCRHEIGHT	600
 
 // tests to perform
-// #define BUILD_REFERENCE
+#define BUILD_REFERENCE
 #define BUILD_AVX
-// #define TRAVERSE_2WAY_ST
+#define TRAVERSE_2WAY_ST
 #define TRAVERSE_2WAY_MT
 #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_2WAY_MT_DIVERGENT
