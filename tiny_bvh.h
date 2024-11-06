@@ -911,6 +911,9 @@ void BVH::Intersect256Rays( Ray* packet ) const
 #ifdef BVH_USEAVX
 
 // Intersect a BVH with a ray packet, basic SSE-optimized version.
+// Note: This yields +10% on 10th gen Intel CPUs, but a small loss on
+// more recent hardware. This function needs a full conversion to work
+// with groups of 8 rays at a time - TODO.
 void BVH::Intersect256RaysSSE( Ray* packet ) const
 {
 	// Corner rays are: 0, 51, 204 and 255
