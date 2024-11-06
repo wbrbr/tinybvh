@@ -916,7 +916,8 @@ void BVH::Intersect256RaysSSE( Ray* packet ) const
 	// Corner rays are: 0, 51, 204 and 255
 	// Construct the bounding planes, with normals pointing outwards
 	bvhvec3 O = packet[0].O; // same for all rays in this case
-	__m128 O4 = *(__m128*)&packet[0].O;
+	__m128 O4 = *(__m128*) & packet[0].O;
+	__m128 mask4 = _mm_cmpeq_ps( _mm_setzero_ps(), _mm_set_ps( 1, 0, 0, 0 ) );
 	bvhvec3 p0 = packet[0].O + packet[0].D; // top-left
 	bvhvec3 p1 = packet[51].O + packet[51].D; // top-right
 	bvhvec3 p2 = packet[204].O + packet[204].D; // bottom-left
@@ -975,11 +976,12 @@ void BVH::Intersect256RaysSSE( Ray* packet ) const
 			float distLeft, distRight;
 			{
 				// see if we want to intersect the left child
-				const __m128 minO4 = _mm_sub_ps( *(__m128*)&left->aabbMin, O4 );
-				const __m128 maxO4 = _mm_sub_ps( *(__m128*)&left->aabbMax, O4 );
+				const __m128 minO4 = _mm_sub_ps( *(__m128*) & left->aabbMin, O4 );
+				const __m128 maxO4 = _mm_sub_ps( *(__m128*) & left->aabbMax, O4 );
 				// 1. Early-in test: if first ray hits the node, the packet visits the node
-				const __m128 rD4 = *(__m128*)&packet[first].rD;
-				const __m128 st1 = _mm_mul_ps( minO4, rD4 ), st2 = _mm_mul_ps( maxO4, rD4 );
+				const __m128 rD4 = *(__m128*) & packet[first].rD;
+				const __m128 st1 = _mm_mul_ps( _mm_and_ps( minO4, mask4 ), rD4 );
+				const __m128 st2 = _mm_mul_ps( _mm_and_ps( maxO4, mask4 ), rD4 );
 				const __m128 vmax4 = _mm_max_ps( st1, st2 ), vmin4 = _mm_min_ps( st1, st2 );
 				const float tmax = tinybvh_min( LANE( vmax4, 0 ), tinybvh_min( LANE( vmax4, 1 ), LANE( vmax4, 2 ) ) );
 				const float tmin = tinybvh_max( LANE( vmin4, 0 ), tinybvh_max( LANE( vmin4, 1 ), LANE( vmin4, 2 ) ) );
@@ -1000,8 +1002,9 @@ void BVH::Intersect256RaysSSE( Ray* packet ) const
 						// 3. Last resort: update first and last, stay in node if first > last
 						for (; leftFirst <= leftLast; leftFirst++)
 						{
-							const __m128 rD4 = *(__m128*)&packet[leftFirst].rD;
-							const __m128 st1 = _mm_mul_ps( minO4, rD4 ), st2 = _mm_mul_ps( maxO4, rD4 );
+							const __m128 rD4 = *(__m128*) & packet[leftFirst].rD;
+							const __m128 st1 = _mm_mul_ps( _mm_and_ps( minO4, mask4 ), rD4 );
+							const __m128 st2 = _mm_mul_ps( _mm_and_ps( maxO4, mask4 ), rD4 );
 							const __m128 vmax4 = _mm_max_ps( st1, st2 ), vmin4 = _mm_min_ps( st1, st2 );
 							const float tmax = tinybvh_min( LANE( vmax4, 0 ), tinybvh_min( LANE( vmax4, 1 ), LANE( vmax4, 2 ) ) );
 							const float tmin = tinybvh_max( LANE( vmin4, 0 ), tinybvh_max( LANE( vmin4, 1 ), LANE( vmin4, 2 ) ) );
@@ -1009,8 +1012,9 @@ void BVH::Intersect256RaysSSE( Ray* packet ) const
 						}
 						for (; leftLast >= leftFirst; leftLast--)
 						{
-							const __m128 rD4 = *(__m128*)&packet[leftLast].rD;
-							const __m128 st1 = _mm_mul_ps( minO4, rD4 ), st2 = _mm_mul_ps( maxO4, rD4 );
+							const __m128 rD4 = *(__m128*) & packet[leftLast].rD;
+							const __m128 st1 = _mm_mul_ps( _mm_and_ps( minO4, mask4 ), rD4 );
+							const __m128 st2 = _mm_mul_ps( _mm_and_ps( maxO4, mask4 ), rD4 );
 							const __m128 vmax4 = _mm_max_ps( st1, st2 ), vmin4 = _mm_min_ps( st1, st2 );
 							const float tmax = tinybvh_min( LANE( vmax4, 0 ), tinybvh_min( LANE( vmax4, 1 ), LANE( vmax4, 2 ) ) );
 							const float tmin = tinybvh_max( LANE( vmin4, 0 ), tinybvh_max( LANE( vmin4, 1 ), LANE( vmin4, 2 ) ) );
@@ -1022,10 +1026,10 @@ void BVH::Intersect256RaysSSE( Ray* packet ) const
 			}
 			{
 				// see if we want to intersect the right child
-				const __m128 minO4 = _mm_sub_ps( *(__m128*)&right->aabbMin, O4 );
-				const __m128 maxO4 = _mm_sub_ps( *(__m128*)&right->aabbMax, O4 );
+				const __m128 minO4 = _mm_sub_ps( *(__m128*) & right->aabbMin, O4 );
+				const __m128 maxO4 = _mm_sub_ps( *(__m128*) & right->aabbMax, O4 );
 				// 1. Early-in test: if first ray hits the node, the packet visits the node
-				const __m128 rD4 = *(__m128*)&packet[first].rD;
+				const __m128 rD4 = *(__m128*) & packet[first].rD;
 				const __m128 st1 = _mm_mul_ps( minO4, rD4 ), st2 = _mm_mul_ps( maxO4, rD4 );
 				const __m128 vmax4 = _mm_max_ps( st1, st2 ), vmin4 = _mm_min_ps( st1, st2 );
 				const float tmax = tinybvh_min( LANE( vmax4, 0 ), tinybvh_min( LANE( vmax4, 1 ), LANE( vmax4, 2 ) ) );
@@ -1047,8 +1051,9 @@ void BVH::Intersect256RaysSSE( Ray* packet ) const
 						// 3. Last resort: update first and last, stay in node if first > last
 						for (; rightFirst <= rightLast; rightFirst++)
 						{
-							const __m128 rD4 = *(__m128*)&packet[rightFirst].rD;
-							const __m128 st1 = _mm_mul_ps( minO4, rD4 ), st2 = _mm_mul_ps( maxO4, rD4 );
+							const __m128 rD4 = *(__m128*) & packet[rightFirst].rD;
+							const __m128 st1 = _mm_mul_ps( _mm_and_ps( minO4, mask4 ), rD4 );
+							const __m128 st2 = _mm_mul_ps( _mm_and_ps( maxO4, mask4 ), rD4 );
 							const __m128 vmax4 = _mm_max_ps( st1, st2 ), vmin4 = _mm_min_ps( st1, st2 );
 							const float tmax = tinybvh_min( LANE( vmax4, 0 ), tinybvh_min( LANE( vmax4, 1 ), LANE( vmax4, 2 ) ) );
 							const float tmin = tinybvh_max( LANE( vmin4, 0 ), tinybvh_max( LANE( vmin4, 1 ), LANE( vmin4, 2 ) ) );
@@ -1056,8 +1061,9 @@ void BVH::Intersect256RaysSSE( Ray* packet ) const
 						}
 						for (; rightLast >= first; rightLast--)
 						{
-							const __m128 rD4 = *(__m128*)&packet[rightLast].rD;
-							const __m128 st1 = _mm_mul_ps( minO4, rD4 ), st2 = _mm_mul_ps( maxO4, rD4 );
+							const __m128 rD4 = *(__m128*) & packet[rightLast].rD;
+							const __m128 st1 = _mm_mul_ps( _mm_and_ps( minO4, mask4 ), rD4 );
+							const __m128 st2 = _mm_mul_ps( _mm_and_ps( maxO4, mask4 ), rD4 );
 							const __m128 vmax4 = _mm_max_ps( st1, st2 ), vmin4 = _mm_min_ps( st1, st2 );
 							const float tmax = tinybvh_min( LANE( vmax4, 0 ), tinybvh_min( LANE( vmax4, 1 ), LANE( vmax4, 2 ) ) );
 							const float tmin = tinybvh_max( LANE( vmin4, 0 ), tinybvh_max( LANE( vmin4, 1 ), LANE( vmin4, 2 ) ) );
