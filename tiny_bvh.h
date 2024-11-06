@@ -730,26 +730,30 @@ int BVH::Intersect( Ray& ray ) const
 // extended with sorted traversal and reduced stack traffic.
 void BVH::Intersect256Rays( Ray* packet ) const
 {
+	// convenience macro
+#define CALC_TMIN_TMAX_WITH_SLABTEST_ON_RAY( r ) const bvhvec3 rD = packet[r].rD, t1 = o1 * rD, t2 = o2 * rD; \
+	const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( t1.x, t2.x ), tinybvh_min( t1.y, t2.y ) ), tinybvh_min( t1.z, t2.z ) ); \
+	const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( t1.x, t2.x ), tinybvh_max( t1.y, t2.y ) ), tinybvh_max( t1.z, t2.z ) );
 	// Corner rays are: 0, 51, 204 and 255
 	// Construct the bounding planes, with normals pointing outwards
-	bvhvec3 O = packet[0].O; // same for all rays in this case
-	bvhvec3 p0 = packet[0].O + packet[0].D; // top-left
-	bvhvec3 p1 = packet[51].O + packet[51].D; // top-right
-	bvhvec3 p2 = packet[204].O + packet[204].D; // bottom-left
-	bvhvec3 p3 = packet[255].O + packet[255].D; // bottom-right
-	bvhvec3 plane0 = normalize( cross( p0 - O, p0 - p2 ) ); // left plane
-	bvhvec3 plane1 = normalize( cross( p3 - O, p3 - p1 ) ); // right plane
-	bvhvec3 plane2 = normalize( cross( p1 - O, p1 - p0 ) ); // top plane
-	bvhvec3 plane3 = normalize( cross( p2 - O, p2 - p3 ) ); // bottom plane
-	int sign0x = plane0.x < 0 ? 4 : 0, sign0y = plane0.y < 0 ? 5 : 1, sign0z = plane0.z < 0 ? 6 : 2;
-	int sign1x = plane1.x < 0 ? 4 : 0, sign1y = plane1.y < 0 ? 5 : 1, sign1z = plane1.z < 0 ? 6 : 2;
-	int sign2x = plane2.x < 0 ? 4 : 0, sign2y = plane2.y < 0 ? 5 : 1, sign2z = plane2.z < 0 ? 6 : 2;
-	int sign3x = plane3.x < 0 ? 4 : 0, sign3y = plane3.y < 0 ? 5 : 1, sign3z = plane3.z < 0 ? 6 : 2;
-	float t0 = dot( O, plane0 ), t1 = dot( O, plane1 );
-	float t2 = dot( O, plane2 ), t3 = dot( O, plane3 );
+	const bvhvec3 O = packet[0].O; // same for all rays in this case
+	const bvhvec3 p0 = packet[0].O + packet[0].D; // top-left
+	const bvhvec3 p1 = packet[51].O + packet[51].D; // top-right
+	const bvhvec3 p2 = packet[204].O + packet[204].D; // bottom-left
+	const bvhvec3 p3 = packet[255].O + packet[255].D; // bottom-right
+	const bvhvec3 plane0 = normalize( cross( p0 - O, p0 - p2 ) ); // left plane
+	const bvhvec3 plane1 = normalize( cross( p3 - O, p3 - p1 ) ); // right plane
+	const bvhvec3 plane2 = normalize( cross( p1 - O, p1 - p0 ) ); // top plane
+	const bvhvec3 plane3 = normalize( cross( p2 - O, p2 - p3 ) ); // bottom plane
+	const int sign0x = plane0.x < 0 ? 4 : 0, sign0y = plane0.y < 0 ? 5 : 1, sign0z = plane0.z < 0 ? 6 : 2;
+	const int sign1x = plane1.x < 0 ? 4 : 0, sign1y = plane1.y < 0 ? 5 : 1, sign1z = plane1.z < 0 ? 6 : 2;
+	const int sign2x = plane2.x < 0 ? 4 : 0, sign2y = plane2.y < 0 ? 5 : 1, sign2z = plane2.z < 0 ? 6 : 2;
+	const int sign3x = plane3.x < 0 ? 4 : 0, sign3y = plane3.y < 0 ? 5 : 1, sign3z = plane3.z < 0 ? 6 : 2;
+	const float d0 = dot( O, plane0 ), d1 = dot( O, plane1 );
+	const float d2 = dot( O, plane2 ), d3 = dot( O, plane3 );
 	// Traverse the tree with the packet
 	int first = 0, last = 255; // first and last active ray in the packet
-	BVHNode* node = &bvhNode[0];
+	const BVHNode* node = &bvhNode[0];
 	ALIGNED( 64 ) unsigned int stack[64], stackPtr = 0;
 	while (1)
 	{
@@ -784,21 +788,17 @@ void BVH::Intersect256Rays( Ray* packet ) const
 		else
 		{
 			// fetch pointers to child nodes
-			BVHNode* left = bvhNode + node->leftFirst;
-			BVHNode* right = bvhNode + node->leftFirst + 1;
+			const BVHNode* left = bvhNode + node->leftFirst;
+			const BVHNode* right = bvhNode + node->leftFirst + 1;
 			bool visitLeft = true, visitRight = true;
 			int leftFirst = first, leftLast = last, rightFirst = first, rightLast = last;
 			float distLeft, distRight;
 			{
 				// see if we want to intersect the left child
-				const float ox1 = left->aabbMin.x - O.x, ox2 = left->aabbMax.x - O.x;
-				const float oy1 = left->aabbMin.y - O.y, oy2 = left->aabbMax.y - O.y;
-				const float oz1 = left->aabbMin.z - O.z, oz2 = left->aabbMax.z - O.z;
+				const bvhvec3 o1( left->aabbMin.x - O.x, left->aabbMin.y - O.y, left->aabbMin.z - O.z );
+				const bvhvec3 o2( left->aabbMax.x - O.x, left->aabbMax.y - O.y, left->aabbMax.z - O.z );
 				// 1. Early-in test: if first ray hits the node, the packet visits the node
-				const bvhvec3 rD = packet[first].rD;
-				const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
-				const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
-				const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+				CALC_TMIN_TMAX_WITH_SLABTEST_ON_RAY( first );
 				const bool earlyHit = (tmax >= tmin && tmin < packet[first].hit.t && tmax >= 0);
 				distLeft = tmin;
 				// 2. Early-out test: if the node aabb is outside the four planes, we skip the node
@@ -809,25 +809,19 @@ void BVH::Intersect256Rays( Ray* packet ) const
 					bvhvec3 p1( minmax[sign1x], minmax[sign1y], minmax[sign1z] );
 					bvhvec3 p2( minmax[sign2x], minmax[sign2y], minmax[sign2z] );
 					bvhvec3 p3( minmax[sign3x], minmax[sign3y], minmax[sign3z] );
-					if (dot( p0, plane0 ) > t0 || dot( p1, plane1 ) > t1 || dot( p2, plane2 ) > t2 || dot( p3, plane3 ) > t3)
+					if (dot( p0, plane0 ) > d0 || dot( p1, plane1 ) > d1 || dot( p2, plane2 ) > d2 || dot( p3, plane3 ) > d3)
 						visitLeft = false;
 					else
 					{
 						// 3. Last resort: update first and last, stay in node if first > last
 						for (; leftFirst <= leftLast; leftFirst++)
 						{
-							const bvhvec3 rD = packet[leftFirst].rD;
-							const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
-							const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
-							const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+							CALC_TMIN_TMAX_WITH_SLABTEST_ON_RAY( leftFirst );
 							if (tmax >= tmin && tmin < packet[leftFirst].hit.t && tmax >= 0) { distLeft = tmin; break; }
 						}
 						for (; leftLast >= leftFirst; leftLast--)
 						{
-							const bvhvec3 rD = packet[leftLast].rD;
-							const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
-							const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
-							const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+							CALC_TMIN_TMAX_WITH_SLABTEST_ON_RAY( leftLast );
 							if (tmax >= tmin && tmin < packet[leftLast].hit.t && tmax >= 0) break;
 						}
 						visitLeft = leftLast >= leftFirst;
@@ -836,14 +830,10 @@ void BVH::Intersect256Rays( Ray* packet ) const
 			}
 			{
 				// see if we want to intersect the right child
-				const float ox1 = right->aabbMin.x - O.x, ox2 = right->aabbMax.x - O.x;
-				const float oy1 = right->aabbMin.y - O.y, oy2 = right->aabbMax.y - O.y;
-				const float oz1 = right->aabbMin.z - O.z, oz2 = right->aabbMax.z - O.z;
+				const bvhvec3 o1( right->aabbMin.x - O.x, right->aabbMin.y - O.y, right->aabbMin.z - O.z );
+				const bvhvec3 o2( right->aabbMax.x - O.x, right->aabbMax.y - O.y, right->aabbMax.z - O.z );
 				// 1. Early-in test: if first ray hits the node, the packet visits the node
-				const bvhvec3 rD = packet[first].rD;
-				const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
-				const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
-				const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+				CALC_TMIN_TMAX_WITH_SLABTEST_ON_RAY( first );
 				const bool earlyHit = (tmax >= tmin && tmin < packet[first].hit.t && tmax >= 0);
 				distRight = tmin;
 				// 2. Early-out test: if the node aabb is outside the four planes, we skip the node
@@ -854,25 +844,19 @@ void BVH::Intersect256Rays( Ray* packet ) const
 					bvhvec3 p1( minmax[sign1x], minmax[sign1y], minmax[sign1z] );
 					bvhvec3 p2( minmax[sign2x], minmax[sign2y], minmax[sign2z] );
 					bvhvec3 p3( minmax[sign3x], minmax[sign3y], minmax[sign3z] );
-					if (dot( p0, plane0 ) > t0 || dot( p1, plane1 ) > t1 || dot( p2, plane2 ) > t2 || dot( p3, plane3 ) > t3)
+					if (dot( p0, plane0 ) > d0 || dot( p1, plane1 ) > d1 || dot( p2, plane2 ) > d2 || dot( p3, plane3 ) > d3)
 						visitRight = false;
 					else
 					{
 						// 3. Last resort: update first and last, stay in node if first > last
 						for (; rightFirst <= rightLast; rightFirst++)
 						{
-							const bvhvec3 rD = packet[rightFirst].rD;
-							const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
-							const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
-							const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+							CALC_TMIN_TMAX_WITH_SLABTEST_ON_RAY( rightFirst );
 							if (tmax >= tmin && tmin < packet[rightFirst].hit.t && tmax >= 0) { distRight = tmin; break; }
 						}
 						for (; rightLast >= first; rightLast--)
 						{
-							const bvhvec3 rD = packet[rightLast].rD;
-							const float tx1 = ox1 * rD.x, tx2 = ox2 * rD.x, ty1 = oy1 * rD.y, ty2 = oy2 * rD.y, tz1 = oz1 * rD.z, tz2 = oz2 * rD.z;
-							const float tmin = tinybvh_max( tinybvh_max( tinybvh_min( tx1, tx2 ), tinybvh_min( ty1, ty2 ) ), tinybvh_min( tz1, tz2 ) );
-							const float tmax = tinybvh_min( tinybvh_min( tinybvh_max( tx1, tx2 ), tinybvh_max( ty1, ty2 ) ), tinybvh_max( tz1, tz2 ) );
+							CALC_TMIN_TMAX_WITH_SLABTEST_ON_RAY( rightLast );
 							if (tmax >= tmin && tmin < packet[rightLast].hit.t && tmax >= 0) break;
 						}
 						visitRight = rightLast >= rightFirst;
