@@ -195,6 +195,28 @@ int main()
 	mrays = (float)N / traceTimeMTP;
 	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeMTP * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
+#ifdef BVH_USEAVX
+
+	// trace all rays three times to estimate average performance
+	// - coherent distribution, multi-core, packet traversal, SSE version
+	t.reset();
+	printf( "- CPU, coherent, basic 2-way layout, MT, packets (SSE):  " );
+	for (int j = 0; j < 3; j++)
+	{
+		const int batchCount = N / (30 * 256); // batches of 30 packets of 256 rays
+	#pragma omp parallel for schedule(dynamic)
+		for (int batch = 0; batch < batchCount; batch++)
+		{
+			const int batchStart = batch * 30 * 256;
+			for (int i = 0; i < 30; i++) bvh.Intersect256RaysSSE( rays + batchStart + i * 256 );
+		}
+	}
+	float traceTimeMTPS = t.elapsed() / 3.0f;
+	mrays = (float)N / traceTimeMTPS;
+	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeMTPS * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
+
 #endif
 
 #ifdef TRAVERSE_2WAY_MT_DIVERGENT
