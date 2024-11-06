@@ -85,6 +85,7 @@ THE SOFTWARE.
 // Visual Studio / C11
 #include <malloc.h>
 #include <math.h> // for sqrtf, fabs
+#include <string.h> // for memset
 #define ALIGNED( x ) __declspec( align( x ) )
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( x ), 64 ) )
 #define ALIGNED_FREE( x ) _aligned_free( x )
@@ -353,7 +354,6 @@ public:
 #ifdef TINYBVH_IMPLEMENTATION
 
 #include <assert.h>			// for assert
-#include <string.h>			// for memset
 #ifdef BVH_USEAVX
 #include "immintrin.h"		// for __m256
 #endif
