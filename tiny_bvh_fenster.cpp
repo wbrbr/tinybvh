@@ -98,4 +98,5 @@ void Tick( uint32_t* buf )
 			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
 		}
 	}
+	ALIGNED_FREE(rays);
 }
