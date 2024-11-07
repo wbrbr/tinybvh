@@ -1,13 +1,23 @@
 #include "external/fenster.h" // https://github.com/zserge/fenster
 
+// #define USE_NANORT // enable to verify correct implementation
+
 #define TINYBVH_IMPLEMENTATION
 #include "tiny_bvh.h"
+
+#ifdef USE_NANORT
+#include "external/nanort.h"
+static nanort::BVHAccel<float> accel;
+static float* nanort_verts = 0;
+static unsigned int* nanort_faces = 0;
+#else
+BVH bvh;
+#endif
 
 using namespace tinybvh;
 
 bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
 int verts = 0;
-BVH bvh;
 
 void sphere_flake( float x, float y, float z, float s, int d = 0 )
 {
@@ -36,8 +46,27 @@ void Init()
 	// generate a sphere flake scene
 	sphere_flake( 0, 0, 0, 1.5f );
 
+#ifndef USE_NANORT
+
 	// build a BVH over the scene
 	bvh.Build( (bvhvec4*)triangles, verts / 3 );
+
+#else
+
+	// convert data to correct format for NanoRT and build a BVH
+	// https://github.com/lighttransport/nanort
+	nanort_verts = new float[verts * 3];
+	nanort_faces = new unsigned int[verts];
+	for (int i = 0; i < verts; i++)
+		nanort_verts[i * 3 + 0] = triangles[i].x, nanort_verts[i * 3 + 1] = triangles[i].y,
+		nanort_verts[i * 3 + 2] = triangles[i].z, nanort_faces[i] = i; // Note: not using shared vertices.
+	nanort::TriangleMesh<float> triangle_mesh( nanort_verts, nanort_faces, sizeof( float ) * 3 );
+	nanort::TriangleSAHPred<float> triangle_pred( nanort_verts, nanort_faces, sizeof( float ) * 3 );
+	nanort::BVHBuildOptions<float> build_options; // BVH build option(optional)
+	accel.Build( verts / 3, triangle_mesh, triangle_pred, build_options );
+
+#endif
+
 }
 
 void Tick( uint32_t* buf )
@@ -53,7 +82,7 @@ void Tick( uint32_t* buf )
 	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
 	int N = 0;
 	Ray* rays = (Ray*)ALIGNED_MALLOC( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
-	for( int ty = 0; ty < SCRHEIGHT / 4; ty++ ) for( int tx = 0; tx < SCRWIDTH / 4; tx++ )
+	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
 		{
@@ -68,17 +97,35 @@ void Tick( uint32_t* buf )
 			}
 		}
 	}
-	
+
 	// trace primary rays
-#if 1
+#ifndef USE_NANORT
+#if 0
 	const int packetCount = N / 256;
 	for (int i = 0; i < packetCount; i++) bvh.Intersect256Rays( rays + i * 256 );
 #else
 	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 #endif
-	
+#else
+	nanort::Ray<float> ray;
+	nanort::BVHTraceOptions trace_options; // optional
+	nanort::TriangleIntersector<float> triangle_intersector( nanort_verts, nanort_faces, sizeof( float ) * 3 );
+	for (int i = 0; i < N; i += 16)
+	{
+		ray.org[0] = rays[i].O.x, ray.org[1] = rays[i].O.y, ray.org[2] = rays[i].O.z;
+		ray.dir[0] = rays[i].D.x, ray.dir[1] = rays[i].D.y, ray.dir[2] = rays[i].D.z;
+		ray.min_t = 0, ray.max_t = rays[i].hit.t;
+		nanort::TriangleIntersection<float> isect;
+		bool hit = accel.Traverse( ray, triangle_intersector, &isect, trace_options );
+		if (hit)
+			rays[i].hit.t = isect.t,
+			rays[i].hit.u = isect.u, rays[i].hit.v = isect.v,
+			rays[i].hit.prim = isect.prim_id;
+	}
+#endif
+
 	// visualize result
-	for( int i = 0, ty = 0; ty < SCRHEIGHT / 4; ty++ ) for( int tx = 0; tx < SCRWIDTH / 4; tx++ )
+	for (int i = 0, ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
 		{
@@ -94,9 +141,13 @@ void Tick( uint32_t* buf )
 				bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
 				avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
 			}
+		#ifndef USE_NANORT
 			int c = (int)(15.9f * avg);
+		#else
+			int c = (int)(255.9f * avg); // we trace only every 16th ray with NanoRT
+		#endif
 			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
 		}
 	}
-	ALIGNED_FREE(rays);
+	ALIGNED_FREE( rays );
 }
