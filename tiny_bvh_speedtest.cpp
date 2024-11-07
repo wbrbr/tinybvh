@@ -15,11 +15,12 @@
 // tests to perform
 #define BUILD_REFERENCE
 #define BUILD_AVX
+#define NANORT_BUILD
 #define TRAVERSE_2WAY_ST
+#define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_2WAY_MT
 #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_2WAY_MT_DIVERGENT
-#define NANORT_BUILD
 #define NANORT_TRAVERSE
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
@@ -225,6 +226,21 @@ int main()
 
 #endif
 
+#ifdef TRAVERSE_ALT2WAY_ST
+
+	// trace all rays three times to estimate average performance
+	// - single core version, alternative bvh layout
+	printf( "- CPU, coherent, alt 2-way layout, ST: " );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::AILA_LAINE );
+	t.reset();
+	for (int pass = 0; pass < 3; pass++)
+		for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::AILA_LAINE );
+	float traceTimeAlt = t.elapsed() / 3.0f;
+	mrays = (float)N / traceTimeAlt;
+	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeAlt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
+
 #ifdef TRAVERSE_2WAY_MT
 
 	// trace all rays three times to estimate average performance
@@ -354,7 +370,7 @@ int main()
 
 #endif
 
-#ifdef NANORT_TRAVERSE
+#if defined NANORT_TRAVERSE && defined NANORT_BUILD
 
 	// trace every 16th ray using NanoRT to estimate average performance
 	t.reset();

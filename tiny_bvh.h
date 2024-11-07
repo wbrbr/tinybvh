@@ -272,14 +272,28 @@ struct Ray
 class BVH
 {
 public:
+	enum BVHLayout { WALD_32BYTE = 1, AILA_LAINE };
 	struct BVHNode
 	{
+		// 'Traditional' 32-byte BVH node layout, as proposed by Ingo Wald.
+		// When aligned to a cache line boundary, two of these fit together.
 		bvhvec3 aabbMin; unsigned int leftFirst; // 16 bytes
 		bvhvec3 aabbMax; unsigned int triCount;	// 16 bytes, total: 32 bytes
 		bool isLeaf() const { return triCount > 0; /* empty BVH leaves do not exist */ }
 		float Intersect( const Ray& ray ) const { return BVH::IntersectAABB( ray, aabbMin, aabbMax ); }
 		float SurfaceArea() const { return BVH::SA( aabbMin, aabbMax ); }
 		float CalculateNodeCost() const { return SurfaceArea() * triCount; }
+	};
+	struct BVHNodeAlt
+	{
+		// Alternative 64-byte BVH node layout, which specifies the bounds of
+		// the children rather than the node itself. This layout is used by
+		// Aila and Laine in their seminal GPU ray tracing paper.
+		bvhvec3 lmin; unsigned int left;
+		bvhvec3 lmax; unsigned int right;
+		bvhvec3 rmin; unsigned int triCount;
+		bvhvec3 rmax; unsigned int firstTri; // total: 64 bytes
+		bool isLeaf() const { return triCount > 0; }
 	};
 	struct Fragment
 	{
@@ -321,11 +335,14 @@ public:
 	}
 	void Build( const bvhvec4* vertices, const unsigned int primCount );
 	void BuildAVX( const bvhvec4* vertices, const unsigned int primCount );
+	void Convert( BVHLayout from, BVHLayout to, bool deleteOriginal = false );
 	void Refit();
-	int Intersect( Ray& ray ) const;
+	int Intersect( Ray& ray, BVHLayout layout = WALD_32BYTE ) const;
 	void Intersect256Rays( Ray* first ) const;
 	void Intersect256RaysSSE( Ray* packet ) const;
 private:
+	int Intersect_Wald32Byte( Ray& ray ) const;
+	int Intersect_AilaLaine( Ray& ray ) const;
 	void IntersectTri( Ray& ray, const unsigned int triIdx ) const;
 	static float IntersectAABB( const Ray& ray, const bvhvec3& aabbMin, const bvhvec3& aabbMax );
 	static float SA( const bvhvec3& aabbMin, const bvhvec3& aabbMax )
@@ -337,10 +354,11 @@ public:
 	bvhvec4* verts = 0;				// pointer to input primitive array: 3x16 bytes per tri
 	unsigned int triCount = 0;		// number of primitives in tris
 	Fragment* fragment = 0;			// input primitive bounding boxes
-	unsigned int* triIdx = 0;				// primitive index array
-	unsigned int idxCount = 0;				// number of indices in triIdx. May exceed triCount * 3 for SBVH.
-	unsigned int newNodePtr = 0;			// number of reserved nodes
-	BVHNode* bvhNode = 0;			// BVH node pool. Root is always in node 0.
+	unsigned int* triIdx = 0;		// primitive index array
+	unsigned int idxCount = 0;		// number of indices in triIdx. May exceed triCount * 3 for SBVH.
+	unsigned int newNodePtr = 0;	// number of reserved nodes
+	BVHNode* bvhNode = 0;			// BVH node pool, Wald 32-byte format. Root is always in node 0.
+	BVHNodeAlt* altNode = 0;		// BVH node in Aila & Laine format.
 };
 
 } // namespace tinybvh
@@ -475,6 +493,48 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 		}
 		// fetch subdivision task from stack
 		if (taskCount == 0) break; else nodeIdx = task[--taskCount];
+	}
+}
+
+void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
+{
+	if (from == WALD_32BYTE && to == AILA_LAINE)
+	{
+		// allocate space
+		altNode = (BVHNodeAlt*)ALIGNED_MALLOC( sizeof( BVHNodeAlt ) * newNodePtr );
+		memset( altNode, 0, sizeof( BVHNodeAlt ) * newNodePtr );
+		// recursively convert nodes
+		unsigned int newAltNode = 0, nodeIdx = 0, stack[128], stackPtr = 0;
+		while (1)
+		{
+			const BVHNode& node = bvhNode[nodeIdx];
+			const unsigned int idx = newAltNode++;
+			if (node.isLeaf())
+			{
+				altNode[idx].triCount = node.triCount;
+				altNode[idx].firstTri = node.leftFirst;
+				if (!stackPtr) break;
+				nodeIdx = stack[--stackPtr];
+				unsigned int newNodeParent = stack[--stackPtr];
+				altNode[newNodeParent].right = newAltNode;
+			}
+			else
+			{
+				const BVHNode& left = bvhNode[node.leftFirst];
+				const BVHNode& right = bvhNode[node.leftFirst + 1];
+				altNode[idx].lmin = left.aabbMin, altNode[idx].rmin = right.aabbMin;
+				altNode[idx].lmax = left.aabbMax, altNode[idx].rmax = right.aabbMax;
+				altNode[idx].left = newAltNode; // right will be filled when popped
+				stack[stackPtr++] = idx;
+				stack[stackPtr++] = node.leftFirst + 1;
+				nodeIdx = node.leftFirst;
+			}
+		}
+	}
+	else
+	{
+		// For now all other conversions are invalid.
+		assert( false );
 	}
 }
 
@@ -691,8 +751,26 @@ void BVH::Refit()
 // This function returns the intersection details in Ray::hit. Additionally,
 // the number of steps through the BVH is returned. Visualize this to get a
 // visual impression of the structure of the BVH.
-int BVH::Intersect( Ray& ray ) const
+int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 {
+	switch (layout)
+	{
+	case WALD_32BYTE:
+		return Intersect_Wald32Byte( ray );
+		break;
+	case AILA_LAINE:
+		return Intersect_AilaLaine( ray );
+		break;
+	default:
+		assert( false );
+	};
+	return 0;
+}
+
+// Traverse the default BVH layout (WALD_32BYTE).
+int BVH::Intersect_Wald32Byte( Ray& ray ) const
+{
+	assert( bvhNode != 0 );
 	BVHNode* node = &bvhNode[0], * stack[64];
 	unsigned int stackPtr = 0, steps = 0;
 	while (1)
@@ -721,7 +799,52 @@ int BVH::Intersect( Ray& ray ) const
 	return steps;
 }
 
-// Intersect a BVH with a ray packet.
+// Traverse the alternative BVH layout (AILA_LAINE).
+int BVH::Intersect_AilaLaine( Ray& ray ) const
+{
+	assert( altNode != 0 );
+	BVHNodeAlt* node = &altNode[0], * stack[64];
+	unsigned int stackPtr = 0, steps = 0;
+	while (1)
+	{
+		steps++;
+		if (node->isLeaf())
+		{
+			for (unsigned int i = 0; i < node->triCount; i++) IntersectTri( ray, triIdx[node->firstTri + i] );
+			if (stackPtr == 0) break; else node = stack[--stackPtr];
+			continue;
+		}
+		const bvhvec3 lmin = node->lmin - ray.O, lmax = node->lmax - ray.O;
+		const bvhvec3 rmin = node->rmin - ray.O, rmax = node->rmax - ray.O;
+		float dist1 = 1e30f, dist2 = 1e30f;
+		const bvhvec3 t1a = lmin * ray.rD, t2a = lmax * ray.rD;
+		const bvhvec3 t1b = rmin * ray.rD, t2b = rmax * ray.rD;
+		const float tmina = tinybvh_max( tinybvh_max( tinybvh_min( t1a.x, t2a.x ), tinybvh_min( t1a.y, t2a.y ) ), tinybvh_min( t1a.z, t2a.z ) );
+		const float tmaxa = tinybvh_min( tinybvh_min( tinybvh_max( t1a.x, t2a.x ), tinybvh_max( t1a.y, t2a.y ) ), tinybvh_max( t1a.z, t2a.z ) );
+		const float tminb = tinybvh_max( tinybvh_max( tinybvh_min( t1b.x, t2b.x ), tinybvh_min( t1b.y, t2b.y ) ), tinybvh_min( t1b.z, t2b.z ) );
+		const float tmaxb = tinybvh_min( tinybvh_min( tinybvh_max( t1b.x, t2b.x ), tinybvh_max( t1b.y, t2b.y ) ), tinybvh_max( t1b.z, t2b.z ) );
+		if (tmaxa >= tmina && tmina < ray.hit.t && tmaxa >= 0) dist1 = tmina;
+		if (tmaxb >= tminb && tminb < ray.hit.t && tmaxb >= 0) dist2 = tminb;
+		unsigned int lidx = node->left, ridx = node->right;
+		if (dist1 > dist2)
+		{
+			float t = dist1; dist1 = dist2; dist2 = t;
+			unsigned int i = lidx; lidx = ridx; ridx = i;
+		}
+		if (dist1 == 1e30f)
+		{
+			if (stackPtr == 0) break; else node = stack[--stackPtr];
+		}
+		else
+		{
+			node = altNode + lidx;
+			if (dist2 != 1e30f) stack[stackPtr++] = altNode + ridx;
+		}
+	}
+	return steps;
+}
+
+// Intersect a WALD_32BYTE BVH with a ray packet.
 // The 256 rays travel together to better utilize the caches and to amortize the cost 
 // of memory transfers over the rays in the bundle.
 // Note that this basic implementation assumes a specific layout of the rays. Provided
