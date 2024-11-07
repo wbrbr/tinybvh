@@ -21,8 +21,8 @@
 #define TRAVERSE_2WAY_MT_DIVERGENT
 #define NANORT_BUILD
 #define NANORT_TRAVERSE
-#define EMBREE_BUILD
-#define EMBREE_TRAVERSE
+// #define EMBREE_BUILD // win64-only for now.
+// #define EMBREE_TRAVERSE // win64-only for now.
 
 using namespace tinybvh;
 
@@ -194,9 +194,11 @@ int main()
 		vertices[i * 3 + 0] = triangles[i].x, vertices[i * 3 + 1] = triangles[i].y;
 		vertices[i * 3 + 2] = triangles[i].z, indices[i] = i; // Note: not using shared vertices.
 	}
+	rtcSetGeometryBuildQuality( embreeGeom, RTC_BUILD_QUALITY_MEDIUM ); // no spatial splits
 	rtcCommitGeometry( embreeGeom );
 	rtcAttachGeometry( embreeScene, embreeGeom );
 	rtcReleaseGeometry( embreeGeom );
+	rtcSetSceneBuildQuality( embreeScene, RTC_BUILD_QUALITY_MEDIUM );
 	t.reset();
 	rtcCommitScene( embreeScene ); // assuming this is where (supposedly threaded) BVH build happens.
 	float embreeBuildTime = t.elapsed();
@@ -337,8 +339,9 @@ int main()
 		rayhits[i].hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 	}
 	t.reset();
-	for (int i = 0; i < N; i++) rtcIntersect1( embreeScene, rayhits + i );
-	float traceTimeEmbree = t.elapsed();
+	for( int pass = 0; pass < 3; pass++ )
+		for (int i = 0; i < N; i++) rtcIntersect1( embreeScene, rayhits + i );
+	float traceTimeEmbree = t.elapsed() * 0.3333f;
 	// retrieve intersection results
 	for (int i = 0; i < N; i++)
 	{
