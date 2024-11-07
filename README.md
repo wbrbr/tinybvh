@@ -5,7 +5,7 @@ Single-header BVH construction and traversal library written as "Sane C++" (or "
 A Bounding Volume Hierarchy is a data structure used to quickly find intersections in a virtual scene; most commonly between a ray and a group of triangles. You can read more about this in a series of articles on the subject: https://jacco.ompf2.com/2022/04/13/how-to-build-a-bvh-part-1-basics .
 
 Right now tiny_bvh comes with two builders:
-* ````BVH::Build```` : Efficient plain-C/C+ builder which should run on any platform.
+* ````BVH::Build```` : Efficient plain-C/C+ binned SAH BVH builder which should run on any platform.
 * ````BVH::BuildAVX```` : A highly optimized version of BVH::Build for Intel CPUs.
 
 Once a BVH is constructed, it may be _refitted_ in case the triangles moved using ````BVH::Refit````. Refitting is substantially faster than rebuilding and works well if the animation is subtle. Refitting does not work if polygon counts change.
