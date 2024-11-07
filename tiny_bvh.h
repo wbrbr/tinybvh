@@ -915,7 +915,25 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 		steps++;
 		if (node->isLeaf())
 		{
-			for (unsigned int i = 0; i < node->triCount; i++) IntersectTri( ray, triIdx[node->firstTri + i] );
+			for (unsigned int i = 0; i < node->triCount; i++)
+			{
+				const unsigned int tidx = triIdx[node->firstTri + i], vertIdx = tidx * 3;
+				const bvhvec3 edge1 = verts[vertIdx + 1] - verts[vertIdx];
+				const bvhvec3 edge2 = verts[vertIdx + 2] - verts[vertIdx];
+				const bvhvec3 h = cross( ray.D, edge2 );
+				const float a = dot( edge1, h );
+				if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
+				const float f = 1 / a;
+				const bvhvec3 s = ray.O - bvhvec3( verts[vertIdx] );
+				const float u = f * dot( s, h );
+				if (u < 0 || u > 1) continue;
+				const bvhvec3 q = cross( s, edge1 );
+				const float v = f * dot( ray.D, q );
+				if (v < 0 || u + v > 1) continue;
+				const float t = f * dot( edge2, q );
+				if (t < 0 || t > ray.hit.t) continue;
+				ray.hit.t = t, ray.hit.u = u, ray.hit.v = v, ray.hit.prim = tidx;
+			}
 			if (stackPtr == 0) break; else node = stack[--stackPtr];
 			continue;
 		}
@@ -938,12 +956,13 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 		x4 = _mm_shuffle_ps( t0, t2, _MM_SHUFFLE( 1, 0, 1, 0 ) );
 		y4 = _mm_shuffle_ps( t0, t2, _MM_SHUFFLE( 3, 2, 3, 2 ) );
 		z4 = _mm_shuffle_ps( t1, t3, _MM_SHUFFLE( 1, 0, 1, 0 ) );
-		const __m128 min4 = _mm_max_ps( _mm_max_ps( x4, y4 ), z4 );
-		const __m128 max4 = _mm_min_ps( _mm_min_ps( x4, y4 ), z4 );
-		const float tmina = LANE( min4, 0 ), tmaxa = LANE( max4, 1 );
-		const float tminb = LANE( min4, 2 ), tmaxb = LANE( max4, 3 );
-		float dist1 = (tmaxa >= tmina && tmina < ray.hit.t && tmaxa >= 0) ? tmina : 1e30f;
-		float dist2 = (tmaxb >= tminb && tminb < ray.hit.t && tmaxb >= 0) ? tminb : 1e30f;
+		const __m128 min4 = _mm_max_ps( _mm_max_ps( _mm_max_ps( x4, y4 ), z4 ), _mm_setzero_ps() );
+		const __m128 max4 = _mm_min_ps( _mm_min_ps( _mm_min_ps( x4, y4 ), z4 ), _mm_set1_ps( ray.hit.t ) );
+		// TODO: use a shuffle here to do the comparison / select with SSE, then extract dist1 and dist2. 
+		const float tmina_0 = LANE( min4, 0 ), tmaxa_1 = LANE( max4, 1 );
+		const float tminb_2 = LANE( min4, 2 ), tmaxb_3 = LANE( max4, 3 );
+		float dist1 = tmaxa_1 >= tmina_0 ? tmina_0 : 1e30f;
+		float dist2 = tmaxb_3 >= tminb_2 ? tminb_2 : 1e30f;
 		unsigned int lidx = node->left, ridx = node->right;
 		if (dist1 > dist2)
 		{
