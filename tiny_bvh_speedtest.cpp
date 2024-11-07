@@ -21,6 +21,8 @@
 #define TRAVERSE_2WAY_MT_DIVERGENT
 #define NANORT_BUILD
 #define NANORT_TRAVERSE
+#define EMBREE_BUILD
+#define EMBREE_TRAVERSE
 
 using namespace tinybvh;
 
@@ -34,6 +36,13 @@ using namespace std; // ugly, sorry
 static nanort::BVHAccel<float> accel;
 static float* nanort_verts = 0;
 static unsigned int* nanort_faces = 0;
+#endif
+
+#if defined EMBREE_BUILD || defined EMBREE_TRAVERSE
+#include "embree4/rtcore.h"
+static RTCScene embreeScene;
+void embreeError( void* userPtr, enum RTCError error, const char* str )
+{ printf( "error %d: %s\n", error, str ); }
 #endif
 
 float uniform_rand() { return (float)rand() / (float)RAND_MAX; }
@@ -170,6 +179,31 @@ int main()
 
 #endif
 
+#if defined EMBREE_BUILD || defined EMBREE_TRAVERSE
+
+	// convert data to correct format for Embree and build a BVH
+	printf( "- Embree BVH builder: " );
+	RTCDevice embreeDevice = rtcNewDevice( NULL );
+	rtcSetDeviceErrorFunction( embreeDevice, embreeError, NULL );
+	embreeScene = rtcNewScene( embreeDevice );
+	RTCGeometry embreeGeom = rtcNewGeometry( embreeDevice, RTC_GEOMETRY_TYPE_TRIANGLE );
+	float* vertices = (float*)rtcSetNewGeometryBuffer( embreeGeom, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 3 * sizeof( float ), verts );
+	unsigned* indices = (unsigned*)rtcSetNewGeometryBuffer( embreeGeom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 3 * sizeof( unsigned ), verts / 3 );
+	for (int i = 0; i < verts; i++)
+	{
+		vertices[i * 3 + 0] = triangles[i].x, vertices[i * 3 + 1] = triangles[i].y;
+		vertices[i * 3 + 2] = triangles[i].z, indices[i] = i; // Note: not using shared vertices.
+	}
+	rtcCommitGeometry( embreeGeom );
+	rtcAttachGeometry( embreeScene, embreeGeom );
+	rtcReleaseGeometry( embreeGeom );
+	t.reset();
+	rtcCommitScene( embreeScene ); // assuming this is where (supposedly threaded) BVH build happens.
+	float embreeBuildTime = t.elapsed();
+	printf( "%.2fms for %i triangles\n", embreeBuildTime * 1000.0f, verts / 3 );
+
+#endif
+
 	// trace all rays once to warm the caches
 	printf( "BVH traversal speed\n" );
 	printf( "warming caches...\n" );
@@ -286,11 +320,42 @@ int main()
 
 #endif
 
+#if defined EMBREE_TRAVERSE && defined EMBREE_BUILD
+
+	// trace all rays three times to estimate average performance
+	// - coherent, Embree, single-threaded
+	printf( "- CPU, coherent, Embree BVH, Embree ST:  " );
+	struct RTCRayHit* rayhits = (RTCRayHit*)ALIGNED_MALLOC( SCRWIDTH * SCRHEIGHT * 16 * sizeof( RTCRayHit ) );
+	// copy our rays to Embree format
+	for (int i = 0; i < N; i++)
+	{
+		rayhits[i].ray.org_x = rays[i].O.x, rayhits[i].ray.org_y = rays[i].O.y, rayhits[i].ray.org_z = rays[i].O.z;
+		rayhits[i].ray.dir_x = rays[i].D.x, rayhits[i].ray.dir_y = rays[i].D.y, rayhits[i].ray.dir_z = rays[i].D.z;
+		rayhits[i].ray.tnear = 0, rayhits[i].ray.tfar = rays[i].hit.t;
+		rayhits[i].ray.mask = -1, rayhits[i].ray.flags = 0;
+		rayhits[i].hit.geomID = RTC_INVALID_GEOMETRY_ID;
+		rayhits[i].hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
+	}
+	t.reset();
+	for (int i = 0; i < N; i++) rtcIntersect1( embreeScene, rayhits + i );
+	float traceTimeEmbree = t.elapsed();
+	// retrieve intersection results
+	for (int i = 0; i < N; i++)
+	{
+		rays[i].hit.t = rayhits[i].ray.tfar;
+		rays[i].hit.u = rayhits[i].hit.u, rays[i].hit.u = rayhits[i].hit.v;
+		rays[i].hit.prim = rayhits[i].hit.primID;
+	}
+	mrays = (float)N / traceTimeEmbree;
+	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeEmbree * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
+
 #ifdef NANORT_TRAVERSE
 
 	// trace every 16th ray using NanoRT to estimate average performance
 	t.reset();
-	printf( "- CPU, coherent, using NanoRT, ST:  " );
+	printf( "- CPU, coherent, NanoRT BVH, NanoRT ST:  " );
 	nanort::Ray<float> ray;
 	nanort::BVHTraceOptions trace_options; // library default options
 	nanort::TriangleIntersector<float> triangle_intersector( nanort_verts, nanort_faces, sizeof( float ) * 3 );

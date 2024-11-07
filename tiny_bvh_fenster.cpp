@@ -1,20 +1,28 @@
 #include "external/fenster.h" // https://github.com/zserge/fenster
 
 // #define USE_NANORT // enable to verify correct implementation
+// #define USE_EMBREE // enable to verify correct implementation, win64 only for now.
 
 #define TINYBVH_IMPLEMENTATION
 #include "tiny_bvh.h"
 
-#ifdef USE_NANORT
+using namespace tinybvh;
+
+#if defined(USE_NANORT)
 #include "external/nanort.h"
 static nanort::BVHAccel<float> accel;
 static float* nanort_verts = 0;
 static unsigned int* nanort_faces = 0;
+#elif defined(USE_EMBREE)
+#include "embree4/rtcore.h"
+static RTCScene embreeScene;
+void embreeError( void* userPtr, enum RTCError error, const char* str )
+{
+	printf( "error %d: %s\n", error, str );
+}
 #else
 BVH bvh;
 #endif
-
-using namespace tinybvh;
 
 bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
 int verts = 0;
@@ -46,12 +54,7 @@ void Init()
 	// generate a sphere flake scene
 	sphere_flake( 0, 0, 0, 1.5f );
 
-#ifndef USE_NANORT
-
-	// build a BVH over the scene
-	bvh.Build( (bvhvec4*)triangles, verts / 3 );
-
-#else
+#if defined USE_NANORT
 
 	// convert data to correct format for NanoRT and build a BVH
 	// https://github.com/lighttransport/nanort
@@ -64,6 +67,29 @@ void Init()
 	nanort::TriangleSAHPred<float> triangle_pred( nanort_verts, nanort_faces, sizeof( float ) * 3 );
 	nanort::BVHBuildOptions<float> build_options; // BVH build option(optional)
 	accel.Build( verts / 3, triangle_mesh, triangle_pred, build_options );
+
+#elif defined USE_EMBREE
+
+	RTCDevice embreeDevice = rtcNewDevice( NULL );
+	rtcSetDeviceErrorFunction( embreeDevice, embreeError, NULL );
+	embreeScene = rtcNewScene( embreeDevice );
+	RTCGeometry embreeGeom = rtcNewGeometry( embreeDevice, RTC_GEOMETRY_TYPE_TRIANGLE );
+	float* vertices = (float*)rtcSetNewGeometryBuffer( embreeGeom, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 3 * sizeof( float ), verts );
+	unsigned* indices = (unsigned*)rtcSetNewGeometryBuffer( embreeGeom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 3 * sizeof( unsigned ), verts / 3 );
+	for (int i = 0; i < verts; i++)
+	{
+		vertices[i * 3 + 0] = triangles[i].x, vertices[i * 3 + 1] = triangles[i].y;
+		vertices[i * 3 + 2] = triangles[i].z, indices[i] = i; // Note: not using shared vertices.
+	}
+	rtcCommitGeometry( embreeGeom );
+	rtcAttachGeometry( embreeScene, embreeGeom );
+	rtcReleaseGeometry( embreeGeom );
+	rtcCommitScene( embreeScene );
+
+#else
+
+	// build a BVH over the scene
+	bvh.Build( (bvhvec4*)triangles, verts / 3 );
 
 #endif
 
@@ -99,14 +125,7 @@ void Tick( uint32_t* buf )
 	}
 
 	// trace primary rays
-#ifndef USE_NANORT
-#if 0
-	const int packetCount = N / 256;
-	for (int i = 0; i < packetCount; i++) bvh.Intersect256Rays( rays + i * 256 );
-#else
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
-#endif
-#else
+#if defined(USE_NANORT)
 	nanort::Ray<float> ray;
 	nanort::BVHTraceOptions trace_options; // optional
 	nanort::TriangleIntersector<float> triangle_intersector( nanort_verts, nanort_faces, sizeof( float ) * 3 );
@@ -122,6 +141,23 @@ void Tick( uint32_t* buf )
 			rays[i].hit.u = isect.u, rays[i].hit.v = isect.v,
 			rays[i].hit.prim = isect.prim_id;
 	}
+#elif defined(USE_EMBREE)
+	struct RTCRayHit rayhit;
+	for (int i = 0; i < N; i++)
+	{
+		rayhit.ray.org_x = rays[i].O.x, rayhit.ray.org_y = rays[i].O.y, rayhit.ray.org_z = rays[i].O.z;
+		rayhit.ray.dir_x = rays[i].D.x, rayhit.ray.dir_y = rays[i].D.y, rayhit.ray.dir_z = rays[i].D.z;
+		rayhit.ray.tnear = 0, rayhit.ray.tfar = rays[i].hit.t;
+		rayhit.ray.mask = -1, rayhit.ray.flags = 0;
+		rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+		rayhit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
+		rtcIntersect1( embreeScene, &rayhit );
+		rays[i].hit.t = rayhit.ray.tfar;
+		rays[i].hit.u = rayhit.hit.u, rays[i].hit.u = rayhit.hit.v;
+		rays[i].hit.prim = rayhit.hit.primID;
+	}
+#else
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 #endif
 
 	// visualize result
@@ -141,7 +177,7 @@ void Tick( uint32_t* buf )
 				bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
 				avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
 			}
-		#ifndef USE_NANORT
+		#if defined USE_NANORT
 			int c = (int)(15.9f * avg);
 		#else
 			int c = (int)(255.9f * avg); // we trace only every 16th ray with NanoRT
