@@ -90,6 +90,7 @@ void Init()
 
 	// build a BVH over the scene
 	bvh.Build( (bvhvec4*)triangles, verts / 3 );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 
 #endif
 
@@ -157,7 +158,7 @@ void Tick( uint32_t* buf )
 		rays[i].hit.prim = rayhit.hit.primID;
 	}
 #else
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
 #endif
 
 	// visualize result
@@ -178,9 +179,9 @@ void Tick( uint32_t* buf )
 				avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
 			}
 		#if defined USE_NANORT
-			int c = (int)(15.9f * avg);
-		#else
 			int c = (int)(255.9f * avg); // we trace only every 16th ray with NanoRT
+		#else
+			int c = (int)(15.9f * avg);
 		#endif
 			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
 		}

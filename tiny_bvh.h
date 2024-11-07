@@ -104,7 +104,10 @@ THE SOFTWARE.
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, ( x ) ) )
 #define ALIGNED_FREE( x ) free( x )
 #endif
-
+#endif
+// generic
+#ifdef BVH_USEAVX
+#include "immintrin.h" // for __m128 and __m256
 #endif
 
 namespace tinybvh {
@@ -272,7 +275,7 @@ struct Ray
 class BVH
 {
 public:
-	enum BVHLayout { WALD_32BYTE = 1, AILA_LAINE };
+	enum BVHLayout { WALD_32BYTE = 1, AILA_LAINE, ALT_SOA };
 	struct BVHNode
 	{
 		// 'Traditional' 32-byte BVH node layout, as proposed by Ingo Wald.
@@ -293,6 +296,14 @@ public:
 		bvhvec3 lmax; unsigned int right;
 		bvhvec3 rmin; unsigned int triCount;
 		bvhvec3 rmax; unsigned int firstTri; // total: 64 bytes
+		bool isLeaf() const { return triCount > 0; }
+	};
+	struct BVHNodeAlt2
+	{
+		// Second alternative 64-byte BVH node layout, same as BVHNodeAlt but
+		// with child AABBs stored in SoA order.
+		__m128 xxxx, yyyy, zzzz;
+		unsigned int left, right, triCount, firstTri; // total: 64 bytes
 		bool isLeaf() const { return triCount > 0; }
 	};
 	struct Fragment
@@ -343,6 +354,7 @@ public:
 private:
 	int Intersect_Wald32Byte( Ray& ray ) const;
 	int Intersect_AilaLaine( Ray& ray ) const;
+	int Intersect_AltSoA( Ray& ray ) const;
 	void IntersectTri( Ray& ray, const unsigned int triIdx ) const;
 	static float IntersectAABB( const Ray& ray, const bvhvec3& aabbMin, const bvhvec3& aabbMax );
 	static float SA( const bvhvec3& aabbMin, const bvhvec3& aabbMax )
@@ -359,6 +371,7 @@ public:
 	unsigned int newNodePtr = 0;	// number of reserved nodes
 	BVHNode* bvhNode = 0;			// BVH node pool, Wald 32-byte format. Root is always in node 0.
 	BVHNodeAlt* altNode = 0;		// BVH node in Aila & Laine format.
+	BVHNodeAlt2* alt2Node = 0;		// BVH node in Aila & Laine (SoA version) format.
 };
 
 } // namespace tinybvh
@@ -372,9 +385,6 @@ public:
 #ifdef TINYBVH_IMPLEMENTATION
 
 #include <assert.h>			// for assert
-#ifdef BVH_USEAVX
-#include "immintrin.h"		// for __m256
-#endif
 
 namespace tinybvh {
 
@@ -531,6 +541,42 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 			}
 		}
 	}
+#ifdef BVH_USEAVX
+	else if (from == WALD_32BYTE && to == ALT_SOA)
+	{
+		// allocate space
+		alt2Node = (BVHNodeAlt2*)ALIGNED_MALLOC( sizeof( BVHNodeAlt2 ) * newNodePtr );
+		memset( alt2Node, 0, sizeof( BVHNodeAlt2 ) * newNodePtr );
+		// recursively convert nodes
+		unsigned int newAlt2Node = 0, nodeIdx = 0, stack[128], stackPtr = 0;
+		while (1)
+		{
+			const BVHNode& node = bvhNode[nodeIdx];
+			const unsigned int idx = newAlt2Node++;
+			if (node.isLeaf())
+			{
+				alt2Node[idx].triCount = node.triCount;
+				alt2Node[idx].firstTri = node.leftFirst;
+				if (!stackPtr) break;
+				nodeIdx = stack[--stackPtr];
+				unsigned int newNodeParent = stack[--stackPtr];
+				alt2Node[newNodeParent].right = newAlt2Node;
+			}
+			else
+			{
+				const BVHNode& left = bvhNode[node.leftFirst];
+				const BVHNode& right = bvhNode[node.leftFirst + 1];
+				alt2Node[idx].xxxx = _mm_setr_ps( left.aabbMin.x, left.aabbMax.x, right.aabbMin.x, right.aabbMax.x );
+				alt2Node[idx].yyyy = _mm_setr_ps( left.aabbMin.y, left.aabbMax.y, right.aabbMin.y, right.aabbMax.y );
+				alt2Node[idx].zzzz = _mm_setr_ps( left.aabbMin.z, left.aabbMax.z, right.aabbMin.z, right.aabbMax.z );
+				alt2Node[idx].left = newAlt2Node; // right will be filled when popped
+				stack[stackPtr++] = idx;
+				stack[stackPtr++] = node.leftFirst + 1;
+				nodeIdx = node.leftFirst;
+			}
+		}
+	}
+#endif
 	else
 	{
 		// For now all other conversions are invalid.
@@ -761,6 +807,11 @@ int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 	case AILA_LAINE:
 		return Intersect_AilaLaine( ray );
 		break;
+	#ifdef BVH_USEAVX
+	case ALT_SOA:
+		return Intersect_AltSoA( ray );
+		break;
+	#endif
 	default:
 		assert( false );
 	};
@@ -843,6 +894,75 @@ int BVH::Intersect_AilaLaine( Ray& ray ) const
 	}
 	return steps;
 }
+
+#ifdef BVH_USEAVX
+
+// Traverse the second alternative BVH layout (ALT_SOA).
+int BVH::Intersect_AltSoA( Ray& ray ) const
+{
+	assert( alt2Node != 0 );
+	BVHNodeAlt2* node = &alt2Node[0], * stack[64];
+	unsigned int stackPtr = 0, steps = 0;
+	const __m128 Ox4 = _mm_set1_ps( ray.O.x ), rDx4 = _mm_set1_ps( ray.rD.x );
+	const __m128 Oy4 = _mm_set1_ps( ray.O.y ), rDy4 = _mm_set1_ps( ray.rD.y );
+	const __m128 Oz4 = _mm_set1_ps( ray.O.z ), rDz4 = _mm_set1_ps( ray.rD.z );
+	while (1)
+	{
+		steps++;
+		if (node->isLeaf())
+		{
+			for (unsigned int i = 0; i < node->triCount; i++) IntersectTri( ray, triIdx[node->firstTri + i] );
+			if (stackPtr == 0) break; else node = stack[--stackPtr];
+			continue;
+		}
+		__m128 x4 = _mm_mul_ps( _mm_sub_ps( node->xxxx, Ox4 ), rDx4 );
+		__m128 y4 = _mm_mul_ps( _mm_sub_ps( node->yyyy, Oy4 ), rDy4 );
+		__m128 z4 = _mm_mul_ps( _mm_sub_ps( node->zzzz, Oz4 ), rDz4 );
+		__m128 w4 = _mm_setzero_ps();
+		// transpose
+		__m128 t0 = _mm_unpacklo_ps( x4, y4 ), t2 = _mm_unpacklo_ps( z4, w4 );
+		__m128 t1 = _mm_unpackhi_ps( x4, y4 ), t3 = _mm_unpackhi_ps( z4, w4 );
+		__m128 xyzw1a = _mm_shuffle_ps( t0, t2, _MM_SHUFFLE( 1, 0, 1, 0 ) );
+		__m128 xyzw2a = _mm_shuffle_ps( t0, t2, _MM_SHUFFLE( 3, 2, 3, 2 ) );
+		__m128 xyzw1b = _mm_shuffle_ps( t1, t3, _MM_SHUFFLE( 1, 0, 1, 0 ) );
+		__m128 xyzw2b = _mm_shuffle_ps( t1, t3, _MM_SHUFFLE( 3, 2, 3, 2 ) );
+		// process
+		__m128 tmina4 = _mm_min_ps( xyzw1a, xyzw2a );
+		__m128 tmaxa4 = _mm_max_ps( xyzw1a, xyzw2a );
+		__m128 tminb4 = _mm_min_ps( xyzw1b, xyzw2b );
+		__m128 tmaxb4 = _mm_max_ps( xyzw1b, xyzw2b );
+		// transpose back
+		t0 = _mm_unpacklo_ps( tmina4, tmaxa4 ), t2 = _mm_unpacklo_ps( tminb4, tmaxb4 );
+		t1 = _mm_unpackhi_ps( tmina4, tmaxa4 ), t3 = _mm_unpackhi_ps( tminb4, tmaxb4 );
+		x4 = _mm_shuffle_ps( t0, t2, _MM_SHUFFLE( 1, 0, 1, 0 ) );
+		y4 = _mm_shuffle_ps( t0, t2, _MM_SHUFFLE( 3, 2, 3, 2 ) );
+		z4 = _mm_shuffle_ps( t1, t3, _MM_SHUFFLE( 1, 0, 1, 0 ) );
+		const __m128 min4 = _mm_max_ps( _mm_max_ps( x4, y4 ), z4 );
+		const __m128 max4 = _mm_min_ps( _mm_min_ps( x4, y4 ), z4 );
+		const float tmina = LANE( min4, 0 ), tmaxa = LANE( max4, 1 );
+		const float tminb = LANE( min4, 2 ), tmaxb = LANE( max4, 3 );
+		float dist1 = (tmaxa >= tmina && tmina < ray.hit.t && tmaxa >= 0) ? tmina : 1e30f;
+		float dist2 = (tmaxb >= tminb && tminb < ray.hit.t && tmaxb >= 0) ? tminb : 1e30f;
+		unsigned int lidx = node->left, ridx = node->right;
+		if (dist1 > dist2)
+		{
+			float t = dist1; dist1 = dist2; dist2 = t;
+			unsigned int i = lidx; lidx = ridx; ridx = i;
+		}
+		if (dist1 == 1e30f)
+		{
+			if (stackPtr == 0) break; else node = stack[--stackPtr];
+		}
+		else
+		{
+			node = alt2Node + lidx;
+			if (dist2 != 1e30f) stack[stackPtr++] = alt2Node + ridx;
+		}
+	}
+	return steps;
+}
+
+#endif
 
 // Intersect a WALD_32BYTE BVH with a ray packet.
 // The 256 rays travel together to better utilize the caches and to amortize the cost 

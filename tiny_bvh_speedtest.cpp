@@ -18,6 +18,7 @@
 #define NANORT_BUILD
 #define TRAVERSE_2WAY_ST
 #define TRAVERSE_ALT2WAY_ST
+#define TRAVERSE_SOA2WAY_ST
 #define TRAVERSE_2WAY_MT
 #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_2WAY_MT_DIVERGENT
@@ -43,7 +44,9 @@ static unsigned int* nanort_faces = 0;
 #include "embree4/rtcore.h"
 static RTCScene embreeScene;
 void embreeError( void* userPtr, enum RTCError error, const char* str )
-{ printf( "error %d: %s\n", error, str ); }
+{
+	printf( "error %d: %s\n", error, str );
+}
 #endif
 
 float uniform_rand() { return (float)rand() / (float)RAND_MAX; }
@@ -99,7 +102,7 @@ int main()
 	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
 	int N = 0;
 	Ray* rays = (Ray*)ALIGNED_MALLOC( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
-	for( int ty = 0; ty < SCRHEIGHT / 4; ty++ ) for( int tx = 0; tx < SCRWIDTH / 4; tx++ )
+	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
 		{
@@ -241,6 +244,21 @@ int main()
 
 #endif
 
+#ifdef TRAVERSE_SOA2WAY_ST
+
+	// trace all rays three times to estimate average performance
+	// - single core version, alternative bvh layout 2
+	printf( "- CPU, coherent, soa 2-way layout, ST: " );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
+	t.reset();
+	for (int pass = 0; pass < 3; pass++)
+		for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
+	float traceTimeAlt2 = t.elapsed() / 3.0f;
+	mrays = (float)N / traceTimeAlt2;
+	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeAlt2 * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
+
 #ifdef TRAVERSE_2WAY_MT
 
 	// trace all rays three times to estimate average performance
@@ -310,7 +328,7 @@ int main()
 #ifdef TRAVERSE_2WAY_MT_DIVERGENT
 
 	// shuffle rays for the next experiment - TODO: replace by random bounce
-	for( int i = 0; i < N; i++ )
+	for (int i = 0; i < N; i++)
 	{
 		int j = (i + 17 * rand()) % N;
 		Ray t = rays[i];
@@ -355,7 +373,7 @@ int main()
 		rayhits[i].hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 	}
 	t.reset();
-	for( int pass = 0; pass < 3; pass++ )
+	for (int pass = 0; pass < 3; pass++)
 		for (int i = 0; i < N; i++) rtcIntersect1( embreeScene, rayhits + i );
 	float traceTimeEmbree = t.elapsed() * 0.3333f;
 	// retrieve intersection results
