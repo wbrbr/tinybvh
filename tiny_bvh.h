@@ -298,6 +298,7 @@ public:
 		bvhvec3 rmax; unsigned int firstTri; // total: 64 bytes
 		bool isLeaf() const { return triCount > 0; }
 	};
+#ifdef BVH_USEAVX
 	struct BVHNodeAlt2
 	{
 		// Second alternative 64-byte BVH node layout, same as BVHNodeAlt but
@@ -306,6 +307,7 @@ public:
 		unsigned int left, right, triCount, firstTri; // total: 64 bytes
 		bool isLeaf() const { return triCount > 0; }
 	};
+#endif
 	struct Fragment
 	{
 		// A fragment stores the bounds of an input primitive. The name 'Fragment' is from
@@ -371,7 +373,9 @@ public:
 	unsigned int newNodePtr = 0;	// number of reserved nodes
 	BVHNode* bvhNode = 0;			// BVH node pool, Wald 32-byte format. Root is always in node 0.
 	BVHNodeAlt* altNode = 0;		// BVH node in Aila & Laine format.
+#ifdef BVH_USEAVX
 	BVHNodeAlt2* alt2Node = 0;		// BVH node in Aila & Laine (SoA version) format.
+#endif
 };
 
 } // namespace tinybvh
