@@ -962,11 +962,18 @@ inline float halfArea( const __m128 a /* a contains extent of aabb */ )
 {
 	return LANE( a, 0 ) * LANE( a, 1 ) + LANE( a, 1 ) * LANE( a, 2 ) + LANE( a, 2 ) * LANE( a, 3 );
 }
-inline float halfArea( const __m256 a /* a contains aabb itself, with min.xyz negated */ )
+inline float halfArea( const __m256& a /* a contains aabb itself, with min.xyz negated */ )
 {
+#ifndef _MSC_VER
+	// g++ doesn't seem to like the faster construct
+	float* c = (float*)&a;
+	float ex = c[4] + c[0], ey = c[5] + c[1], ez = c[6] + c[2];
+	return ex * ey + ey * ez + ez * ex;
+#else
 	const __m128 q = _mm256_castps256_ps128( _mm256_add_ps( _mm256_permute2f128_ps( a, a, 5 ), a ) );
 	const __m128 v = _mm_mul_ps( q, _mm_shuffle_ps( q, q, 9 ) );
 	return LANE( v, 0 ) + LANE( v, 1 ) + LANE( v, 2 );
+#endif
 }
 #define PROCESS_PLANE( a, pos, ANLR, lN, rN, lb, rb ) if (lN * rN != 0) { \
 	ANLR = halfArea( lb ) * (float)lN + halfArea( rb ) * (float)rN; if (ANLR < splitCost) \
@@ -1070,7 +1077,7 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 			const __m256* bb = binbox;
 			for (int a = 0; a < 3; a++, bb += BVHBINS) if ((node.aabbMax[a] - node.aabbMin[a]) > minDim.cell[a])
 			{
-				// hardcoded bin processing for BVHBINS == 8, see end of file for generic code.
+				// hardcoded bin processing for BVHBINS == 8
 				assert( BVHBINS == 8 );
 				const unsigned int lN0 = count[a][0], rN0 = count[a][7];
 				const __m256 lb0 = bb[0], rb0 = bb[7];

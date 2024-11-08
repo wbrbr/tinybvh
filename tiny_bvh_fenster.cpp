@@ -2,6 +2,7 @@
 
 // #define USE_NANORT // enable to verify correct implementation
 // #define USE_EMBREE // enable to verify correct implementation, win64 only for now.
+// #define LOADSPONZA
 
 #define TINYBVH_IMPLEMENTATION
 #include "tiny_bvh.h"
@@ -24,7 +25,11 @@ void embreeError( void* userPtr, enum RTCError error, const char* str )
 BVH bvh;
 #endif
 
+#ifdef LOADSPONZA
+bvhvec4* triangles;
+#else
 bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
+#endif
 int verts = 0;
 
 void sphere_flake( float x, float y, float z, float s, int d = 0 )
@@ -51,8 +56,17 @@ void sphere_flake( float x, float y, float z, float s, int d = 0 )
 
 void Init()
 {
+#ifdef LOADSPONZA
+	// load raw vertex data for Crytek's Sponza
+	FILE* f = fopen( "../testdata/cryteksponza.bin", "rb" );
+	fread( &verts, 1, 4, f );
+	verts *= 3, triangles = new bvhvec4[verts];
+	fread( triangles, sizeof( bvhvec4 ), verts, f );
+	fclose( f );
+#else
 	// generate a sphere flake scene
 	sphere_flake( 0, 0, 0, 1.5f );
+#endif
 
 #if defined USE_NANORT
 
@@ -89,7 +103,7 @@ void Init()
 #else
 
 	// build a BVH over the scene
-	bvh.Build( (bvhvec4*)triangles, verts / 3 );
+	bvh.BuildAVX( triangles, verts / 3 );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 
 #endif
@@ -100,7 +114,11 @@ void Tick( uint32_t* buf )
 {
 	// setup view pyramid for a pinhole camera: 
 	// eye, p1 (top-left), p2 (top-right) and p3 (bottom-left)
+#ifdef LOADSPONZA
+	bvhvec3 eye( 0, 30, 0 ), view = normalize( bvhvec3( -8, 2, -1.7f ) );
+#else
 	bvhvec3 eye( -3.5f, -1.5f, -6.5f ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
+#endif
 	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
 	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
 	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
@@ -136,11 +154,9 @@ void Tick( uint32_t* buf )
 		ray.dir[0] = rays[i].D.x, ray.dir[1] = rays[i].D.y, ray.dir[2] = rays[i].D.z;
 		ray.min_t = 0, ray.max_t = rays[i].hit.t;
 		nanort::TriangleIntersection<float> isect;
-		bool hit = accel.Traverse( ray, triangle_intersector, &isect, trace_options );
-		if (hit)
-			rays[i].hit.t = isect.t,
-			rays[i].hit.u = isect.u, rays[i].hit.v = isect.v,
-			rays[i].hit.prim = isect.prim_id;
+		if (accel.Traverse( ray, triangle_intersector, &isect, trace_options ))
+			rays[i].hit.t = isect.t, rays[i].hit.prim = isect.prim_id,
+			rays[i].hit.u = isect.u, rays[i].hit.v = isect.v;
 	}
 #elif defined(USE_EMBREE)
 	struct RTCRayHit rayhit;
@@ -148,17 +164,14 @@ void Tick( uint32_t* buf )
 	{
 		rayhit.ray.org_x = rays[i].O.x, rayhit.ray.org_y = rays[i].O.y, rayhit.ray.org_z = rays[i].O.z;
 		rayhit.ray.dir_x = rays[i].D.x, rayhit.ray.dir_y = rays[i].D.y, rayhit.ray.dir_z = rays[i].D.z;
-		rayhit.ray.tnear = 0, rayhit.ray.tfar = rays[i].hit.t;
-		rayhit.ray.mask = -1, rayhit.ray.flags = 0;
-		rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
-		rayhit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
+		rayhit.ray.tnear = 0, rayhit.ray.tfar = rays[i].hit.t, rayhit.ray.mask = -1, rayhit.ray.flags = 0;
+		rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID, rayhit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 		rtcIntersect1( embreeScene, &rayhit );
-		rays[i].hit.t = rayhit.ray.tfar;
 		rays[i].hit.u = rayhit.hit.u, rays[i].hit.u = rayhit.hit.v;
-		rays[i].hit.prim = rayhit.hit.primID;
+		rays[i].hit.prim = rayhit.hit.primID, rays[i].hit.t = rayhit.ray.tfar;
 	}
 #else
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
+	for (int i = 0; i < N; i+=16) bvh.Intersect( rays[i], BVH::ALT_SOA );
 #endif
 
 	// visualize result
@@ -169,7 +182,7 @@ void Tick( uint32_t* buf )
 			int pixel_x = tx * 4 + x;
 			int pixel_y = ty * 4 + y;
 			float avg = 0;
-			for (int s = 0; s < 16; s++, i++) if (rays[i].hit.t < 1000)
+			for (int s = 0; s < 16; s++, i++) if (rays[i].hit.t < 10000)
 			{
 				int primIdx = rays[i].hit.prim;
 				bvhvec3 v0 = triangles[primIdx * 3 + 0];
@@ -178,7 +191,7 @@ void Tick( uint32_t* buf )
 				bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
 				avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
 			}
-		#if defined USE_NANORT
+		#if !defined USE_NANORT
 			int c = (int)(255.9f * avg); // we trace only every 16th ray with NanoRT
 		#else
 			int c = (int)(15.9f * avg);
