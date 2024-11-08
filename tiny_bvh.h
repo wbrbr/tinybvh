@@ -1336,6 +1336,7 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 	const __m128 Ox4 = _mm_set1_ps( ray.O.x ), rDx4 = _mm_set1_ps( ray.rD.x );
 	const __m128 Oy4 = _mm_set1_ps( ray.O.y ), rDy4 = _mm_set1_ps( ray.rD.y );
 	const __m128 Oz4 = _mm_set1_ps( ray.O.z ), rDz4 = _mm_set1_ps( ray.rD.z );
+	const __m128 inf4 = _mm_set1_ps( 1e30f );
 	while (1)
 	{
 		steps++;
@@ -1382,14 +1383,23 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 		x4 = _mm_shuffle_ps( t0, t2, _MM_SHUFFLE( 1, 0, 1, 0 ) );
 		y4 = _mm_shuffle_ps( t0, t2, _MM_SHUFFLE( 3, 2, 3, 2 ) );
 		z4 = _mm_shuffle_ps( t1, t3, _MM_SHUFFLE( 1, 0, 1, 0 ) );
+		unsigned int lidx = node->left, ridx = node->right;
 		const __m128 min4 = _mm_max_ps( _mm_max_ps( _mm_max_ps( x4, y4 ), z4 ), _mm_setzero_ps() );
 		const __m128 max4 = _mm_min_ps( _mm_min_ps( _mm_min_ps( x4, y4 ), z4 ), _mm_set1_ps( ray.hit.t ) );
-		// TODO: use a shuffle here to do the comparison / select with SSE, then extract dist1 and dist2. 
+	#if 0
+		// TODO: why is this slower on gen14?
+		const float tmina_0 = LANE( min4, 0 ), tmaxa_1 = LANE( max4, 1 );
+		const float tminb_2 = LANE( min4, 2 ), tmaxb_3 = LANE( max4, 3 );
+		t0 = _mm_shuffle_ps( max4, max4, _MM_SHUFFLE( 1, 3, 1, 3 ) );
+		t1 = _mm_shuffle_ps( min4, min4, _MM_SHUFFLE( 0, 2, 0, 2 ) );
+		t0 = _mm_blendv_ps( inf4, t1, _mm_cmpge_ps( t0, t1 ) );
+		float dist1 = LANE( t0, 1 ), dist2 = LANE( t0, 0 );
+	#else
 		const float tmina_0 = LANE( min4, 0 ), tmaxa_1 = LANE( max4, 1 );
 		const float tminb_2 = LANE( min4, 2 ), tmaxb_3 = LANE( max4, 3 );
 		float dist1 = tmaxa_1 >= tmina_0 ? tmina_0 : 1e30f;
 		float dist2 = tmaxb_3 >= tminb_2 ? tminb_2 : 1e30f;
-		unsigned int lidx = node->left, ridx = node->right;
+	#endif
 		if (dist1 > dist2)
 		{
 			float t = dist1; dist1 = dist2; dist2 = t;
