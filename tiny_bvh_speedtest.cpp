@@ -120,8 +120,10 @@ int main()
 
 	//  T I N Y _ B V H   P E R F O R M A N C E   M E A S U R E M E N T S
 
-	int minor = TINY_BVH_VERSION_MINOR, major = TINY_BVH_VERSION_MAJOR;
-	printf( "tiny_bvh version %i.%i performance statistics\n", major, minor );
+	int minor = TINY_BVH_VERSION_MINOR;
+	int major = TINY_BVH_VERSION_MAJOR;
+	int sub = TINY_BVH_VERSION_SUB;
+	printf( "tiny_bvh version %i.%i.%i performance statistics\n", major, minor, sub );
 	printf( "----------------------------------------------------------------\n" );
 
 	Timer t;
