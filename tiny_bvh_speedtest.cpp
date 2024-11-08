@@ -137,8 +137,8 @@ int main()
 #ifdef BUILD_REFERENCE
 
 	// measure single-core bvh construction time - reference builder
-	t.reset();
 	printf( "- reference builder: " );
+	t.reset();
 	for (int pass = 0; pass < 3; pass++)
 		bvh.Build( (bvhvec4*)triangles, verts / 3 );
 	float buildTime = t.elapsed() / 3.0f;
@@ -150,8 +150,8 @@ int main()
 #ifdef BUILD_AVX
 #ifdef BVH_USEAVX
 	// measure single-core bvh construction time - AVX builder
-	t.reset();
 	printf( "- fast AVX builder:  " );
+	t.reset();
 	for (int pass = 0; pass < 3; pass++) bvh.BuildAVX( (bvhvec4*)triangles, verts / 3 );
 	float buildTimeAVX = t.elapsed() / 3.0f;
 	printf( "%.2fms for %i triangles ", buildTimeAVX * 1000.0f, verts / 3 );
@@ -174,8 +174,8 @@ int main()
 	nanort::TriangleSAHPred<float> triangle_pred( nanort_verts, nanort_faces, sizeof( float ) * 3 );
 	nanort::BVHBuildOptions<float> build_options; // BVH build option(optional)
 	// measure single-core nanort bvh construction time - default settings
-	t.reset();
 	printf( "- NanoRT builder:    " );
+	t.reset();
 	for (int pass = 0; pass < 3; pass++)
 		accel.Build( verts / 3, triangle_mesh, triangle_pred, build_options );
 	float nanoBuildTime = t.elapsed() / 3.0f;
@@ -221,8 +221,8 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - single core version
-	t.reset();
 	printf( "- CPU, coherent, basic 2-way layout, ST: " );
+	t.reset();
 	for (int pass = 0; pass < 3; pass++)
 		for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 	float traceTimeST = t.elapsed() / 3.0f;
@@ -265,8 +265,8 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - multi-core version (using OpenMP and batches of 10,000 rays)
-	t.reset();
 	printf( "- CPU, coherent, basic 2-way layout, MT:  " );
+	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
 		const int batchCount = N / 10000;
@@ -287,8 +287,8 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - coherent distribution, multi-core, packet traversal
-	t.reset();
 	printf( "- CPU, coherent, basic 2-way layout, MT, packets:  " );
+	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
 		const int batchCount = N / (30 * 256); // batches of 30 packets of 256 rays
@@ -307,8 +307,8 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - coherent distribution, multi-core, packet traversal, SSE version
-	t.reset();
 	printf( "- CPU, coherent, basic 2-way layout, MT, packets (SSE):  " );
+	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
 		const int batchCount = N / (30 * 256); // batches of 30 packets of 256 rays
@@ -340,8 +340,8 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - divergent distribution, multi-core
-	t.reset();
 	printf( "- CPU, incoherent, basic 2-way layout, MT:  " );
+	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
 		const int batchCount = N / 10000;
@@ -393,11 +393,11 @@ int main()
 #if defined NANORT_TRAVERSE && defined NANORT_BUILD
 
 	// trace every 16th ray using NanoRT to estimate average performance
-	t.reset();
 	printf( "- CPU, coherent, NanoRT BVH, NanoRT ST:  " );
 	nanort::Ray<float> ray;
 	nanort::BVHTraceOptions trace_options; // library default options
 	nanort::TriangleIntersector<float> triangle_intersector( nanort_verts, nanort_faces, sizeof( float ) * 3 );
+	t.reset();
 	for (int i = 0; i < N; i += 16)
 	{
 		ray.org[0] = rays[i].O.x, ray.org[1] = rays[i].O.y, ray.org[2] = rays[i].O.z;
