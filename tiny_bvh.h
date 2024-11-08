@@ -74,7 +74,7 @@ THE SOFTWARE.
 // library version
 #define TINY_BVH_VERSION_MAJOR	0
 #define TINY_BVH_VERSION_MINOR	3
-#define TINY_BVH_VERSION_SUB	0
+#define TINY_BVH_VERSION_SUB	1
 
 // ============================================================================
 //
@@ -1056,11 +1056,15 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 			unsigned int i0 = ILANE( bi4, 0 ), i1 = ILANE( bi4, 1 ), i2 = ILANE( bi4, 2 ), * ti = triIdx + node.leftFirst + 1;
 			for (unsigned int i = 0; i < node.triCount - 1; i++)
 			{
-				const unsigned int fid = *ti++;
+				unsigned int fid = *ti++;
 				const __m256 b0 = binbox[i0], b1 = binbox[BVHBINS + i1], b2 = binbox[2 * BVHBINS + i2];
 				const __m128 fmin = frag4[fid].bmin4, fmax = frag4[fid].bmax4;
 				r0 = _mm256_max_ps( b0, f ), r1 = _mm256_max_ps( b1, f ), r2 = _mm256_max_ps( b2, f );
 				const __m128i b4 = _mm_cvtps_epi32( _mm_sub_ps( _mm_mul_ps( _mm_sub_ps( _mm_sub_ps( fmax, fmin ), nmin4 ), rpd4 ), half4 ) );
+			#if _MSC_VER < 1920 
+				// VS2017 needs a random check on fid to produce correct code... The condition is never true. 
+				if (fid > triCount) fid = triCount - 1;
+			#endif
 				f = frag8[fid], count[0][i0]++, count[1][i1]++, count[2][i2]++;
 				binbox[i0] = r0, i0 = ILANE( b4, 0 );
 				binbox[BVHBINS + i1] = r1, i1 = ILANE( b4, 1 );
