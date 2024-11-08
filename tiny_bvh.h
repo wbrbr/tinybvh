@@ -242,9 +242,11 @@ static bvhvec3 normalize( const bvhvec3& a )
 #ifdef BVH_USEAVX
 typedef __m128 SIMDVEC4;
 #define SIMD_SETVEC(a,b,c,d) _mm_set_ps( a, b, c, d )
+#define SIMD_SETRVEC(a,b,c,d) _mm_set_ps( d, c, b, a )
 #else
 typedef bvhvec4 SIMDVEC4;
 #define SIMD_SETVEC(a,b,c,d) bvhvec4( d, c, b, a )
+#define SIMD_SETRVEC(a,b,c,d) bvhvec4( a, b, c, d )
 #endif
 
 // ============================================================================
@@ -578,9 +580,9 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 				const BVHNode& right = bvhNode[node.leftFirst + 1];
 				// This BVH layout requires BVH_USEAVX for traversal, but at least we
 				// can convert to it without SSE/AVX/NEON support.
-				alt2Node[idx].xxxx = SIMD_SETVEC( left.aabbMin.x, left.aabbMax.x, right.aabbMin.x, right.aabbMax.x );
-				alt2Node[idx].yyyy = SIMD_SETVEC( left.aabbMin.y, left.aabbMax.y, right.aabbMin.y, right.aabbMax.y );
-				alt2Node[idx].zzzz = SIMD_SETVEC( left.aabbMin.z, left.aabbMax.z, right.aabbMin.z, right.aabbMax.z );
+				alt2Node[idx].xxxx = SIMD_SETRVEC( left.aabbMin.x, left.aabbMax.x, right.aabbMin.x, right.aabbMax.x );
+				alt2Node[idx].yyyy = SIMD_SETRVEC( left.aabbMin.y, left.aabbMax.y, right.aabbMin.y, right.aabbMax.y );
+				alt2Node[idx].zzzz = SIMD_SETRVEC( left.aabbMin.z, left.aabbMax.z, right.aabbMin.z, right.aabbMax.z );
 				alt2Node[idx].left = newAlt2Node; // right will be filled when popped
 				stack[stackPtr++] = idx;
 				stack[stackPtr++] = node.leftFirst + 1;
