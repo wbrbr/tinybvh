@@ -171,7 +171,7 @@ void Tick( uint32_t* buf )
 		rays[i].hit.prim = rayhit.hit.primID, rays[i].hit.t = rayhit.ray.tfar;
 	}
 #else
-	for (int i = 0; i < N; i+=16) bvh.Intersect( rays[i], BVH::ALT_SOA );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
 #endif
 
 	// visualize result
@@ -191,7 +191,7 @@ void Tick( uint32_t* buf )
 				bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
 				avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
 			}
-		#if !defined USE_NANORT
+		#if defined USE_NANORT
 			int c = (int)(255.9f * avg); // we trace only every 16th ray with NanoRT
 		#else
 			int c = (int)(15.9f * avg);

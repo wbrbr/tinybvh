@@ -13,7 +13,7 @@
 #define SCRHEIGHT	600
 
 // tests to perform
-// #define BUILD_REFERENCE
+#define BUILD_REFERENCE
 #define BUILD_AVX
 // #define NANORT_BUILD // disabled by default to avoid warnings.
 #define TRAVERSE_2WAY_ST
