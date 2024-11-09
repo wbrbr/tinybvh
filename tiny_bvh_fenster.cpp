@@ -58,7 +58,8 @@ void Init()
 {
 #ifdef LOADSPONZA
 	// load raw vertex data for Crytek's Sponza
-	FILE* f = fopen( "../testdata/cryteksponza.bin", "rb" );
+	FILE* f;
+	fopen_s( &f, "../testdata/cryteksponza.bin", "rb" );
 	fread( &verts, 1, 4, f );
 	verts *= 3, triangles = new bvhvec4[verts];
 	fread( triangles, sizeof( bvhvec4 ), verts, f );
