@@ -332,7 +332,7 @@ int main()
 	// shuffle rays for the next experiment - TODO: replace by random bounce
 	for (int i = 0; i < N; i++)
 	{
-		int j = (i + 17 * rand()) % N;
+		int j = (unsigned)(i + 17 * rand()) % N;
 		Ray t = rays[i];
 		rays[i] = rays[j];
 		rays[j] = t;
