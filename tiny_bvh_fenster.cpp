@@ -108,7 +108,6 @@ void Init()
 #else
 	bvh.Build( triangles, verts / 3 );
 #endif
-	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 
 #endif
 
@@ -175,7 +174,7 @@ void Tick( uint32_t* buf )
 		rays[i].hit.prim = rayhit.hit.primID, rays[i].hit.t = rayhit.ray.tfar;
 	}
 #else
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 #endif
 
 	// visualize result

@@ -6,6 +6,9 @@
 #else
 #include <cstdio>
 #endif
+#ifdef _WIN32
+#include <intrin.h>		// for __cpuidex
+#endif
 
 // 'screen resolution': see tiny_bvh_fenster.cpp; this program traces the
 // same rays, but without visualization - just performance statistics.
@@ -22,6 +25,7 @@
 #define TRAVERSE_2WAY_MT
 #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_2WAY_MT_DIVERGENT
+#define TRAVERSE_OPTIMIZED_ST
 // #define NANORT_TRAVERSE
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
@@ -58,7 +62,7 @@ struct Timer
 	float elapsed() const
 	{
 		auto t2 = std::chrono::high_resolution_clock::now();
-		return std::chrono::duration_cast<std::chrono::duration<float>>(t2 - start).count();
+		return (float)std::chrono::duration_cast<std::chrono::duration<double>>(t2 - start).count();
 	}
 	void reset() { start = std::chrono::high_resolution_clock::now(); }
 	std::chrono::high_resolution_clock::time_point start;
@@ -123,7 +127,25 @@ int main()
 	int minor = TINY_BVH_VERSION_MINOR;
 	int major = TINY_BVH_VERSION_MAJOR;
 	int sub = TINY_BVH_VERSION_SUB;
-	printf( "tiny_bvh version %i.%i.%i performance statistics\n", major, minor, sub );
+	printf( "tiny_bvh version %i.%i.%i performance statistics ", major, minor, sub );
+
+	// determine compiler
+#ifdef _MSC_VER
+	printf( "(MSVC %i build)\n", _MSC_VER );
+#elif defined __clang__
+	printf( "(clang %i.%i build)\n", __clang_major__ , __clang_minor__ );
+#elif defined __GNUC__
+	printf( "(gcc %i.%i build)\n", __GNUC__, __GNUC_MINOR__ );
+#else
+	printf( "\n" );
+#endif
+
+	// determine what CPU is running the tests.
+#ifdef _WIN32
+	char model[256]{};
+	for(unsigned i = 0; i < 3; ++i) __cpuidex( (int*)(model + i * 16), i + 0x80000002 , 0 );
+	printf( "running on %s\n", model ); 
+#endif
 	printf( "----------------------------------------------------------------\n" );
 
 	Timer t;
@@ -142,8 +164,8 @@ int main()
 	for (int pass = 0; pass < 3; pass++)
 		bvh.Build( (bvhvec4*)triangles, verts / 3 );
 	float buildTime = t.elapsed() / 3.0f;
-	printf( "%.2fms for %i triangles ", buildTime * 1000.0f, verts / 3 );
-	printf( "- %i nodes, SAH=%.2f\n", bvh.newNodePtr, bvh.SAHCost() );
+	printf( "%7.2fms for %7i triangles ", buildTime * 1000.0f, verts / 3 );
+	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 
 #endif
 
@@ -154,8 +176,8 @@ int main()
 	t.reset();
 	for (int pass = 0; pass < 3; pass++) bvh.BuildAVX( (bvhvec4*)triangles, verts / 3 );
 	float buildTimeAVX = t.elapsed() / 3.0f;
-	printf( "%.2fms for %i triangles ", buildTimeAVX * 1000.0f, verts / 3 );
-	printf( "- %i nodes, SAH=%.2f\n", bvh.newNodePtr, bvh.SAHCost() );
+	printf( "%7.2fms for %7i triangles ", buildTimeAVX * 1000.0f, verts / 3 );
+	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 #endif
 #endif
 
@@ -179,16 +201,16 @@ int main()
 	for (int pass = 0; pass < 3; pass++)
 		accel.Build( verts / 3, triangle_mesh, triangle_pred, build_options );
 	float nanoBuildTime = t.elapsed() / 3.0f;
-	printf( "%.2fms for %i triangles ", nanoBuildTime * 1000.0f, verts / 3 );
+	printf( "%7.2fms for %7i triangles ", nanoBuildTime * 1000.0f, verts / 3 );
 	nanort::BVHBuildStatistics stats = accel.GetStatistics();
-	printf( "- %d nodes\n", stats.num_leaf_nodes );
+	printf( "- %6d nodes\n", stats.num_leaf_nodes );
 
 #endif
 
 #if defined EMBREE_BUILD || defined EMBREE_TRAVERSE
 
 	// convert data to correct format for Embree and build a BVH
-	printf( "- Embree BVH builder: " );
+	printf( "- Embree builder:    " );
 	RTCDevice embreeDevice = rtcNewDevice( NULL );
 	rtcSetDeviceErrorFunction( embreeDevice, embreeError, NULL );
 	embreeScene = rtcNewScene( embreeDevice );
@@ -208,26 +230,24 @@ int main()
 	t.reset();
 	rtcCommitScene( embreeScene ); // assuming this is where (supposedly threaded) BVH build happens.
 	float embreeBuildTime = t.elapsed();
-	printf( "%.2fms for %i triangles\n", embreeBuildTime * 1000.0f, verts / 3 );
+	printf( "%7.2fms for %7i triangles\n", embreeBuildTime * 1000.0f, verts / 3 );
 
 #endif
 
 	// trace all rays once to warm the caches
 	printf( "BVH traversal speed\n" );
-	printf( "warming caches...\n" );
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 
 #ifdef TRAVERSE_2WAY_ST
 
 	// trace all rays three times to estimate average performance
 	// - single core version
-	printf( "- CPU, coherent, basic 2-way layout, ST: " );
+	printf( "- CPU, coherent,   basic 2-way layout, ST: " );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
 		for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 	float traceTimeST = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeST;
-	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeST * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeST * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -235,14 +255,14 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - single core version, alternative bvh layout
-	printf( "- CPU, coherent, alt 2-way layout, ST: " );
+	printf( "- CPU, coherent,   alt 2-way layout,   ST: " );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::AILA_LAINE );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
 		for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::AILA_LAINE );
 	float traceTimeAlt = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeAlt;
-	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeAlt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -250,14 +270,14 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - single core version, alternative bvh layout 2
-	printf( "- CPU, coherent, soa 2-way layout, ST: " );
+	printf( "- CPU, coherent,   soa 2-way layout,   ST: " );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
 		for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
 	float traceTimeAlt2 = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeAlt2;
-	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeAlt2 * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt2 * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -265,7 +285,7 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - multi-core version (using OpenMP and batches of 10,000 rays)
-	printf( "- CPU, coherent, basic 2-way layout, MT:  " );
+	printf( "- CPU, coherent,   basic 2-way layout, MT: " );
 	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
@@ -279,7 +299,7 @@ int main()
 	}
 	float traceTimeMT = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeMT;
-	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeMT * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMT * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -287,7 +307,7 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - coherent distribution, multi-core, packet traversal
-	printf( "- CPU, coherent, basic 2-way layout, MT, packets:  " );
+	printf( "- CPU, coherent,   2-way, packets,     MT: " );
 	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
@@ -301,13 +321,13 @@ int main()
 	}
 	float traceTimeMTP = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeMTP;
-	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeMTP * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMTP * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #ifdef BVH_USEAVX
 
 	// trace all rays three times to estimate average performance
 	// - coherent distribution, multi-core, packet traversal, SSE version
-	printf( "- CPU, coherent, basic 2-way layout, MT, packets (SSE):  " );
+	printf( "- CPU, coherent,   2-way, packets/SSE, MT: " );
 	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
@@ -321,40 +341,31 @@ int main()
 	}
 	float traceTimeMTPS = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeMTPS;
-	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeMTPS * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMTPS * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
 #endif
 
-#ifdef TRAVERSE_2WAY_MT_DIVERGENT
-
-	// shuffle rays for the next experiment - TODO: replace by random bounce
-	for (int i = 0; i < N; i++)
-	{
-		int j = (unsigned)(i + 17 * rand()) % N;
-		Ray t = rays[i];
-		rays[i] = rays[j];
-		rays[j] = t;
-	}
+#ifdef TRAVERSE_OPTIMIZED_ST
 
 	// trace all rays three times to estimate average performance
-	// - divergent distribution, multi-core
-	printf( "- CPU, incoherent, basic 2-way layout, MT:  " );
+	// - single core version, alternative bvh layout
+	printf( "Optimizing BVH... " );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::VERBOSE );
 	t.reset();
-	for (int j = 0; j < 3; j++)
-	{
-		const int batchCount = N / 10000;
-	#pragma omp parallel for schedule(dynamic)
-		for (int batch = 0; batch < batchCount; batch++)
-		{
-			const int batchStart = batch * 10000;
-			for (int i = 0; i < 10000; i++) bvh.Intersect( rays[batchStart + i] );
-		}
-	}
-	float traceTimeMTI = t.elapsed() / 3.0f;
-	mrays = (float)N / traceTimeMTI;
-	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeMTI * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	for (int i = 0; i < 1000000; i++) bvh.Optimize();
+	bvh.Convert( BVH::VERBOSE, BVH::WALD_32BYTE );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
+	printf( "done (%.2fs). New SAH=%.2f\n", t.elapsed(), bvh.SAHCost() );
+	for (int i = 0; i < N; i += 2) bvh.Intersect( rays[i], BVH::ALT_SOA ); // re-warm
+	printf( "- CPU, coherent,   2-way optimized,    ST: " );
+	t.reset();
+	for (int pass = 0; pass < 3; pass++)
+		for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
+	float traceTimeOpt = t.elapsed() / 3.0f;
+	mrays = (float)N / traceTimeOpt;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeOpt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -362,7 +373,7 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - coherent, Embree, single-threaded
-	printf( "- CPU, coherent, Embree BVH, Embree ST:  " );
+	printf( "- CPU, coherent,   Embree BVH,  Embree ST: " );
 	struct RTCRayHit* rayhits = (RTCRayHit*)ALIGNED_MALLOC( SCRWIDTH * SCRHEIGHT * 16 * sizeof( RTCRayHit ) );
 	// copy our rays to Embree format
 	for (int i = 0; i < N; i++)
@@ -377,7 +388,7 @@ int main()
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
 		for (int i = 0; i < N; i++) rtcIntersect1( embreeScene, rayhits + i );
-	float traceTimeEmbree = t.elapsed() * 0.3333f;
+	float traceTimeEmbree = t.elapsed() / 3.0f;
 	// retrieve intersection results
 	for (int i = 0; i < N; i++)
 	{
@@ -386,14 +397,14 @@ int main()
 		rays[i].hit.prim = rayhits[i].hit.primID;
 	}
 	mrays = (float)N / traceTimeEmbree;
-	printf( "%.2fms for %.2fM rays (%.2fMRays/s)\n", traceTimeEmbree * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeEmbree * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
 #if defined NANORT_TRAVERSE && defined NANORT_BUILD
 
 	// trace every 16th ray using NanoRT to estimate average performance
-	printf( "- CPU, coherent, NanoRT BVH, NanoRT ST:  " );
+	printf( "- CPU, coherent,   NanoRT BVH, NanoRT  ST:  " );
 	nanort::Ray<float> ray;
 	nanort::BVHTraceOptions trace_options; // library default options
 	nanort::TriangleIntersector<float> triangle_intersector( nanort_verts, nanort_faces, sizeof( float ) * 3 );
@@ -412,7 +423,38 @@ int main()
 	}
 	float traceTimeNano = t.elapsed();
 	float krays = ((float)N / 16.0f) / traceTimeNano;
-	printf( "%.2fms for %.2fM rays (%.2fKRays/s)\n", traceTimeMTI * 1000, (float)N * 1e-6f / 16.0f, krays * 1e-3f );
+	printf( "%6.1fms for %6.2fM rays => %6.2fKRay/s\n", traceTimeNano * 1000, (float)N * 1e-6f / 16.0f, krays * 1e-3f );
+
+#endif
+
+#ifdef TRAVERSE_2WAY_MT_DIVERGENT
+
+	// shuffle rays for the next experiment - TODO: replace by random bounce
+	for (int i = 0; i < N; i++)
+	{
+		int j = (unsigned)(i + 17 * rand()) % N;
+		Ray t = rays[i];
+		rays[i] = rays[j];
+		rays[j] = t;
+	}
+
+	// trace all rays three times to estimate average performance
+	// - divergent distribution, multi-core
+	printf( "- CPU, incoherent, basic 2-way layout, MT: " );
+	t.reset();
+	for (int j = 0; j < 3; j++)
+	{
+		const int batchCount = N / 10000;
+	#pragma omp parallel for schedule(dynamic)
+		for (int batch = 0; batch < batchCount; batch++)
+		{
+			const int batchStart = batch * 10000;
+			for (int i = 0; i < 10000; i++) bvh.Intersect( rays[batchStart + i] );
+		}
+	}
+	float traceTimeMTI = t.elapsed() / 3.0f;
+	mrays = (float)N / traceTimeMTI;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMTI * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 

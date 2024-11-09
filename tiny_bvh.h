@@ -22,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+// Nov 09, '24: version 0.4.0 : Layouts, BVH optimizer
 // Nov 08, '24: version 0.3.0
 // Oct 30, '24: version 0.1.0 : Initial release.
 // Oct 29, '24: version 0.0.1 : Establishing interface.
@@ -238,6 +239,16 @@ static bvhvec3 normalize( const bvhvec3& a )
 	return a * rl;
 }
 
+// Random numbers
+unsigned int bvh_rnd()
+{
+	static unsigned int seed = 0x12345678;
+	seed ^= seed << 13;
+	seed ^= seed >> 17;
+	seed ^= seed << 5;
+	return seed;
+}
+
 // SIMD typedef, helps keeping the interface generic
 #ifdef BVH_USEAVX
 typedef __m128 SIMDVEC4;
@@ -288,7 +299,7 @@ struct Ray
 class BVH
 {
 public:
-	enum BVHLayout { WALD_32BYTE = 1, AILA_LAINE, ALT_SOA };
+	enum BVHLayout { WALD_32BYTE = 1, AILA_LAINE, ALT_SOA, VERBOSE };
 	struct BVHNode
 	{
 		// 'Traditional' 32-byte BVH node layout, as proposed by Ingo Wald.
@@ -319,6 +330,16 @@ public:
 		unsigned int left, right, triCount, firstTri; // total: 64 bytes
 		bool isLeaf() const { return triCount > 0; }
 	};
+	struct BVHNodeVerbose
+	{
+		// This node layout has some extra data per node: It stores left and right
+		// child node indices explicitly, and stores the index of the parent node.
+		// This format exists primarily for the BVH optimizer.
+		bvhvec3 aabbMin; unsigned int left;
+		bvhvec3 aabbMax; unsigned int right;
+		unsigned int triCount, firstTri, parent, sibling;
+		bool isLeaf() const { return triCount > 0; }
+	};
 	struct Fragment
 	{
 		// A fragment stores the bounds of an input primitive. The name 'Fragment' is from
@@ -334,9 +355,16 @@ public:
 	~BVH()
 	{
 		ALIGNED_FREE( bvhNode );
-		delete[] triIdx;
-		delete[] fragment;
+		ALIGNED_FREE( altNode ); // Note: no action if pointer is null
+		ALIGNED_FREE( alt2Node );
+		ALIGNED_FREE( verbose );
+		ALIGNED_FREE( triIdx );
+		ALIGNED_FREE( fragment );
 		bvhNode = 0, triIdx = 0, fragment = 0;
+		allocatedBVHNodes = 0;
+		allocatedAltNodes = 0;
+		allocatedAlt2Nodes = 0;
+		allocatedVerbose = 0;
 	}
 	float SAHCost( const unsigned int nodeIdx = 0 ) const
 	{
@@ -350,8 +378,9 @@ public:
 	int NodeCount( const unsigned int nodeIdx = 0 ) const
 	{
 		// Determine the number of nodes in the tree. Typically the result should
-		// be newNodePtr - 1 (second node is always unused), but some builders may 
+		// be usedBVHNodes - 1 (second node is always unused), but some builders may 
 		// have unused nodes besides node 1.
+		// TODO: Implement for other layouts.
 		const BVHNode& n = bvhNode[nodeIdx];
 		unsigned int retVal = 1;
 		if (!n.isLeaf()) retVal += NodeCount( n.leftFirst ) + NodeCount( n.leftFirst + 1 );
@@ -360,6 +389,7 @@ public:
 	void Build( const bvhvec4* vertices, const unsigned int primCount );
 	void BuildAVX( const bvhvec4* vertices, const unsigned int primCount );
 	void Convert( BVHLayout from, BVHLayout to, bool deleteOriginal = false );
+	void Optimize();
 	void Refit();
 	int Intersect( Ray& ray, BVHLayout layout = WALD_32BYTE ) const;
 	void Intersect256Rays( Ray* first ) const;
@@ -375,16 +405,30 @@ private:
 		bvhvec3 e = aabbMax - aabbMin; // extent of the node
 		return e.x * e.y + e.y * e.z + e.z * e.x;
 	}
+	void RefitUpVerbose( unsigned int nodeIdx );
+	unsigned int FindBestNewPosition( const unsigned int Lid );
+	void ReinsertNodeVerbose( const unsigned int Lid, const unsigned int Nid, const unsigned int origin );
 public:
 	bvhvec4* verts = 0;				// pointer to input primitive array: 3x16 bytes per tri
 	unsigned int triCount = 0;		// number of primitives in tris
 	Fragment* fragment = 0;			// input primitive bounding boxes
 	unsigned int* triIdx = 0;		// primitive index array
 	unsigned int idxCount = 0;		// number of indices in triIdx. May exceed triCount * 3 for SBVH.
-	unsigned int newNodePtr = 0;	// number of reserved nodes
 	BVHNode* bvhNode = 0;			// BVH node pool, Wald 32-byte format. Root is always in node 0.
 	BVHNodeAlt* altNode = 0;		// BVH node in Aila & Laine format.
 	BVHNodeAlt2* alt2Node = 0;		// BVH node in Aila & Laine (SoA version) format.
+	BVHNodeVerbose* verbose = 0;	// BVH node with additional info, for BVH optimizer.
+	bool rebuildable = true;		// rebuilds are safe only if a tree has not been converted.
+	// keep track of allocated buffer size to avoid 
+	// repeated allocation during layout conversion.
+	unsigned allocatedBVHNodes = 0;
+	unsigned allocatedAltNodes = 0;
+	unsigned allocatedAlt2Nodes = 0;
+	unsigned allocatedVerbose = 0;
+	unsigned usedBVHNodes = 0;
+	unsigned usedAltNodes = 0;
+	unsigned usedAlt2Nodes = 0;
+	unsigned usedVerboseNodes = 0;
 };
 
 } // namespace tinybvh
@@ -410,19 +454,23 @@ namespace tinybvh {
 void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 {
 	// allocate on first build
-	if (!bvhNode)
+	const unsigned int spaceNeeded = primCount * 2; // upper limit
+	if (allocatedBVHNodes < spaceNeeded)
 	{
-		idxCount = primCount;
-		triCount = primCount;
-		bvhNode = (BVHNode*)ALIGNED_MALLOC( triCount * 2 * sizeof( BVHNode ) );
+		ALIGNED_FREE( bvhNode );
+		ALIGNED_FREE( triIdx );
+		ALIGNED_FREE( fragment );
+		idxCount = triCount = primCount;
+		bvhNode = (BVHNode*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode ) );
+		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
-		triIdx = new unsigned int[triCount];
+		triIdx = (unsigned int*)ALIGNED_MALLOC( triCount * sizeof( unsigned int ) );
 		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
-		fragment = new Fragment[triCount];
+		fragment = (Fragment*)ALIGNED_MALLOC( triCount * sizeof( Fragment ) );
 	}
-	else assert( triCount == primCount ); // don't change triangle count between builds.
+	else assert( rebuildable == true);
 	// reset node pool
-	newNodePtr = 2;
+	unsigned int newNodePtr = 2;
 	// assign all triangles to the root node
 	BVHNode& root = bvhNode[0];
 	root.leftFirst = 0, root.triCount = triCount, root.aabbMin = bvhvec3( 1e30f ), root.aabbMax = bvhvec3( -1e30f );
@@ -517,6 +565,7 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 		// fetch subdivision task from stack
 		if (taskCount == 0) break; else nodeIdx = task[--taskCount];
 	}
+	usedBVHNodes = newNodePtr;
 }
 
 void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
@@ -524,8 +573,14 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 	if (from == WALD_32BYTE && to == AILA_LAINE)
 	{
 		// allocate space
-		altNode = (BVHNodeAlt*)ALIGNED_MALLOC( sizeof( BVHNodeAlt ) * newNodePtr );
-		memset( altNode, 0, sizeof( BVHNodeAlt ) * newNodePtr );
+		const unsigned int spaceNeeded = usedBVHNodes;
+		if (allocatedAltNodes < spaceNeeded)
+		{
+			ALIGNED_FREE( altNode );
+			altNode = (BVHNodeAlt*)ALIGNED_MALLOC( sizeof( BVHNodeAlt ) * spaceNeeded );
+			allocatedAltNodes = spaceNeeded;
+		}
+		memset( altNode, 0, sizeof( BVHNodeAlt ) * spaceNeeded );
 		// recursively convert nodes
 		unsigned int newAltNode = 0, nodeIdx = 0, stack[128], stackPtr = 0;
 		while (1)
@@ -553,12 +608,19 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 				nodeIdx = node.leftFirst;
 			}
 		}
+		usedAltNodes = newAltNode;
 	}
 	else if (from == WALD_32BYTE && to == ALT_SOA)
 	{
 		// allocate space
-		alt2Node = (BVHNodeAlt2*)ALIGNED_MALLOC( sizeof( BVHNodeAlt2 ) * newNodePtr );
-		memset( alt2Node, 0, sizeof( BVHNodeAlt2 ) * newNodePtr );
+		const unsigned int spaceNeeded = usedBVHNodes;
+		if (allocatedAlt2Nodes < spaceNeeded)
+		{
+			ALIGNED_FREE( alt2Node );
+			alt2Node = (BVHNodeAlt2*)ALIGNED_MALLOC( sizeof( BVHNodeAlt2 ) * spaceNeeded );
+			allocatedAlt2Nodes = spaceNeeded;
+		}
+		memset( alt2Node, 0, sizeof( BVHNodeAlt2 ) * spaceNeeded );
 		// recursively convert nodes
 		unsigned int newAlt2Node = 0, nodeIdx = 0, stack[128], stackPtr = 0;
 		while (1)
@@ -589,12 +651,95 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 				nodeIdx = node.leftFirst;
 			}
 		}
+		usedAlt2Nodes = newAlt2Node;
+	}
+	else if (from == WALD_32BYTE && to == VERBOSE)
+	{
+		// allocate space
+		unsigned int spaceNeeded = usedBVHNodes;
+		if (allocatedVerbose < spaceNeeded)
+		{
+			ALIGNED_FREE( verbose );
+			verbose = (BVHNodeVerbose*)ALIGNED_MALLOC( sizeof( BVHNodeVerbose ) * spaceNeeded );
+			allocatedVerbose = spaceNeeded;
+		}
+		memset( verbose, 0, sizeof( BVHNodeVerbose ) * spaceNeeded );
+		verbose[0].parent = 0xffffffff; // root sentinel
+		// convert
+		unsigned int nodeIdx = 0;
+		unsigned int parent = 0xffffffff;
+		unsigned int stack[128], stackPtr = 0;
+		while (1)
+		{
+			const BVHNode& node = bvhNode[nodeIdx];
+			verbose[nodeIdx].aabbMin = node.aabbMin;
+			verbose[nodeIdx].aabbMax = node.aabbMax;
+			verbose[nodeIdx].triCount = node.triCount;
+			verbose[nodeIdx].parent = parent;
+			if (node.isLeaf())
+			{
+				verbose[nodeIdx].firstTri = node.leftFirst;
+				if (stackPtr == 0) break;
+				nodeIdx = stack[--stackPtr];
+				parent = stack[--stackPtr];
+			}
+			else
+			{
+				verbose[nodeIdx].left = node.leftFirst;
+				verbose[nodeIdx].right = node.leftFirst + 1;
+				stack[stackPtr++] = nodeIdx;
+				stack[stackPtr++] = node.leftFirst + 1;
+				parent = nodeIdx;
+				nodeIdx = node.leftFirst;
+			}
+		}
+		usedVerboseNodes = usedBVHNodes;
+	}
+	else if (from == VERBOSE && to == WALD_32BYTE)
+	{
+		// allocate space
+		const unsigned int spaceNeeded = usedVerboseNodes;
+		if (allocatedBVHNodes < spaceNeeded)
+		{
+			ALIGNED_FREE( bvhNode );
+			bvhNode = (BVHNode*)ALIGNED_MALLOC( triCount * 2 * sizeof( BVHNode ) );
+			allocatedBVHNodes = spaceNeeded;
+		}
+		memset( bvhNode, 0, sizeof( BVHNode ) * spaceNeeded );
+		// start conversion
+		unsigned int srcNodeIdx = 0, dstNodeIdx = 0, newNodePtr = 2;
+		unsigned int srcStack[64], dstStack[64], stackPtr = 0;
+		while (1)
+		{
+			const BVHNodeVerbose& srcNode = verbose[srcNodeIdx];
+			bvhNode[dstNodeIdx].aabbMin = srcNode.aabbMin;
+			bvhNode[dstNodeIdx].aabbMax = srcNode.aabbMax;
+			if (srcNode.isLeaf())
+			{
+				bvhNode[dstNodeIdx].triCount = srcNode.triCount;
+				bvhNode[dstNodeIdx].leftFirst = srcNode.firstTri;
+				if (stackPtr == 0) break;
+				srcNodeIdx = srcStack[--stackPtr];
+				dstNodeIdx = dstStack[stackPtr];
+			}
+			else
+			{
+				bvhNode[dstNodeIdx].leftFirst = newNodePtr;
+				unsigned int srcRightIdx = srcNode.right;
+				srcNodeIdx = srcNode.left;
+				dstNodeIdx = newNodePtr++;
+				srcStack[stackPtr] = srcRightIdx;
+				dstStack[stackPtr++] = newNodePtr++;
+			}
+		}
+		usedBVHNodes = usedVerboseNodes;
 	}
 	else
 	{
 		// For now all other conversions are invalid.
 		assert( false );
 	}
+	rebuildable = false; // hard to guarantee safe rebuilds after a layout conversion.
 }
 
 // Refitting: For animated meshes, where the topology remains intact. This
@@ -603,7 +748,7 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 // slower ray tracing. Rebuild when this happens.
 void BVH::Refit()
 {
-	for (int i = newNodePtr - 1; i >= 0; i--)
+	for (int i = usedBVHNodes - 1; i >= 0; i--)
 	{
 		BVHNode& node = bvhNode[i];
 		if (node.isLeaf()) // leaf: adjust to current triangle vertex positions
@@ -624,6 +769,99 @@ void BVH::Refit()
 		node.aabbMin = tinybvh_min( left.aabbMin, right.aabbMin );
 		node.aabbMax = tinybvh_max( left.aabbMax, right.aabbMax );
 	}
+}
+
+//  Optimizing a BVH: BVH must be in 'verbose' format.
+//  Implements "Fast Insertion-Based Optimization of Bounding Volume Hierarchies",
+void BVH::Optimize()
+{
+	// optimize by reinserting a random subtree - call repeatedly for best results.
+	unsigned int Nid, valid = 0;
+	do
+	{
+		valid = 1, Nid = 2 + bvh_rnd() % (usedVerboseNodes - 2);
+		if (verbose[Nid].parent == 0 || verbose[Nid].isLeaf()) valid = 0;
+		if (valid) if (verbose[verbose[Nid].parent].parent == 0) valid = 0;
+	} while (valid == 0);
+	// snip it loose
+	const BVHNodeVerbose& N = verbose[Nid];
+	const BVHNodeVerbose& P = verbose[N.parent];
+	const unsigned int Pid = N.parent, X1 = P.parent;
+	const unsigned int X2 = P.left == Nid ? P.right : P.left;
+	if (verbose[X1].left == Pid) verbose[X1].left = X2;
+	else /* verbose[X1].right == Pid */ verbose[X1].right = X2;
+	verbose[X2].parent = X1;
+	unsigned int L = N.left, R = N.right;
+	// fix affected node bounds
+	RefitUpVerbose( X1 );
+	ReinsertNodeVerbose( L, Pid, X1 );
+	ReinsertNodeVerbose( R, Nid, X1 );
+}
+
+// RefitUpVerbose: Update bounding boxes of ancestors of the specified node.
+void BVH::RefitUpVerbose( unsigned int nodeIdx )
+{
+	while (nodeIdx != 0xffffffff)
+	{
+		BVHNodeVerbose& node = verbose[nodeIdx];
+		BVHNodeVerbose& left = verbose[node.left];
+		BVHNodeVerbose& right = verbose[node.right];
+		node.aabbMin = tinybvh_min( left.aabbMin, right.aabbMin );
+		node.aabbMax = tinybvh_max( left.aabbMax, right.aabbMax );
+		nodeIdx = node.parent;
+	}
+}
+
+// FindBestNewPosition
+// Part of "Fast Insertion-Based Optimization of Bounding Volume Hierarchies"
+unsigned int BVH::FindBestNewPosition( const unsigned int Lid )
+{
+	BVHNodeVerbose& L = verbose[Lid];
+	float SA_L = SA( L.aabbMin, L.aabbMax );
+	// reinsert L into BVH
+	unsigned int taskNode[512], tasks = 1, Xbest = 0;
+	float taskCi[512], taskInvCi[512], Cbest = 1e30f, epsilon = 1e-10f;
+	taskNode[0] = 0 /* root */, taskCi[0] = 0, taskInvCi[0] = 1 / epsilon;
+	while (tasks > 0)
+	{
+		// 'pop' task with createst taskInvCi
+		float maxInvCi = 0;
+		unsigned int bestTask = 0;
+		for (unsigned int j = 0; j < tasks; j++) if (taskInvCi[j] > maxInvCi) maxInvCi = taskInvCi[j], bestTask = j;
+		unsigned int Xid = taskNode[bestTask];
+		float CiLX = taskCi[bestTask];
+		taskNode[bestTask] = taskNode[--tasks], taskCi[bestTask] = taskCi[tasks], taskInvCi[bestTask] = taskInvCi[tasks];
+		// execute task
+		BVHNodeVerbose& X = verbose[Xid];
+		if (CiLX + SA_L >= Cbest) break;
+		float CdLX = SA( tinybvh_min( L.aabbMin, X.aabbMin ), tinybvh_max( L.aabbMax, X.aabbMax ) );
+		float CLX = CiLX + CdLX;
+		if (CLX < Cbest) Cbest = CLX, Xbest = Xid;
+		float Ci = CLX - SA( X.aabbMin, X.aabbMax );
+		if (Ci + SA_L < Cbest) if (!X.isLeaf())
+		{
+			taskNode[tasks] = X.left, taskCi[tasks] = Ci, taskInvCi[tasks++] = 1.0f / (Ci + epsilon);
+			taskNode[tasks] = X.right, taskCi[tasks] = Ci, taskInvCi[tasks++] = 1.0f / (Ci + epsilon);
+		}
+	}
+	return Xbest;
+}
+
+// ReinsertNodeVerbose
+// Part of "Fast Insertion-Based Optimization of Bounding Volume Hierarchies"
+void BVH::ReinsertNodeVerbose( const unsigned int Lid, const unsigned int Nid, const unsigned int origin )
+{
+	unsigned int Xbest = FindBestNewPosition( Lid );
+	if (verbose[Xbest].parent == 0) Xbest = origin;
+	const unsigned int X1 = verbose[Xbest].parent;
+	BVHNodeVerbose& N = verbose[Nid];
+	N.left = Xbest, N.right = Lid;
+	N.aabbMin = tinybvh_min( verbose[Xbest].aabbMin, verbose[Lid].aabbMin );
+	N.aabbMax = tinybvh_max( verbose[Xbest].aabbMax, verbose[Lid].aabbMax );
+	verbose[Nid].parent = X1;
+	if (verbose[X1].left == Xbest) verbose[X1].left = Nid; else verbose[X1].right = Nid;
+	verbose[Xbest].parent = verbose[Lid].parent = Nid;
+	RefitUpVerbose( Nid );
 }
 
 // Intersect a BVH with a ray.
@@ -919,7 +1157,7 @@ void BVH::IntersectTri( Ray& ray, const unsigned int idx ) const
 	{
 		// register a hit: ray is shortened to t
 		ray.hit.t = t, ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx;
-	}
+}
 }
 
 // IntersectAABB
@@ -1004,18 +1242,22 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 	static const __m128 binmul3 = _mm_set1_ps( BVHBINS * 0.49999f );
 	for (unsigned int i = 0; i < 3 * BVHBINS; i++) binboxOrig[i] = max8; // binbox initialization template
 	// reset node pool
-	newNodePtr = 2;
-	if (!bvhNode)
+	const unsigned int spaceNeeded = triCount * 2;
+	if (allocatedBVHNodes < spaceNeeded)
 	{
-		triCount = primCount;
+		ALIGNED_FREE( bvhNode );
+		ALIGNED_FREE( triIdx );
+		ALIGNED_FREE( fragment );
+		triCount = idxCount = primCount;
 		verts = (bvhvec4*)vertices;
-		triIdx = new unsigned int[triCount];
-		bvhNode = (BVHNode*)ALIGNED_MALLOC( triCount * 2 * sizeof( BVHNode ) );
+		triIdx = (unsigned int*)ALIGNED_MALLOC( triCount * sizeof( unsigned int ) );
+		bvhNode = (BVHNode*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode ) );
+		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
-		fragment = new Fragment[triCount];
-		idxCount = triCount;
+		fragment = (Fragment*)ALIGNED_MALLOC( triCount * sizeof( Fragment ) );
 	}
-	else assert( triCount == primCount ); // don't change triangle count between builds.
+	else assert( rebuildable == true);
+	unsigned int newNodePtr = 2;
 	struct FragSSE { __m128 bmin4, bmax4; };
 	FragSSE* frag4 = (FragSSE*)fragment;
 	__m256* frag8 = (__m256*)fragment;
@@ -1336,7 +1578,7 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 	const __m128 Ox4 = _mm_set1_ps( ray.O.x ), rDx4 = _mm_set1_ps( ray.rD.x );
 	const __m128 Oy4 = _mm_set1_ps( ray.O.y ), rDy4 = _mm_set1_ps( ray.rD.y );
 	const __m128 Oz4 = _mm_set1_ps( ray.O.z ), rDz4 = _mm_set1_ps( ray.rD.z );
-	const __m128 inf4 = _mm_set1_ps( 1e30f );
+	// const __m128 inf4 = _mm_set1_ps( 1e30f );
 	while (1)
 	{
 		steps++;
