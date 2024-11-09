@@ -460,15 +460,15 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 		ALIGNED_FREE( bvhNode );
 		ALIGNED_FREE( triIdx );
 		ALIGNED_FREE( fragment );
-		idxCount = triCount = primCount;
 		bvhNode = (BVHNode*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode ) );
 		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
-		triIdx = (unsigned int*)ALIGNED_MALLOC( triCount * sizeof( unsigned int ) );
+		triIdx = (unsigned int*)ALIGNED_MALLOC( primCount * sizeof( unsigned int ) );
 		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
-		fragment = (Fragment*)ALIGNED_MALLOC( triCount * sizeof( Fragment ) );
+		fragment = (Fragment*)ALIGNED_MALLOC( primCount * sizeof( Fragment ) );
 	}
 	else assert( rebuildable == true);
+	idxCount = triCount = primCount;
 	// reset node pool
 	unsigned int newNodePtr = 2;
 	// assign all triangles to the root node
@@ -1242,21 +1242,21 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 	static const __m128 binmul3 = _mm_set1_ps( BVHBINS * 0.49999f );
 	for (unsigned int i = 0; i < 3 * BVHBINS; i++) binboxOrig[i] = max8; // binbox initialization template
 	// reset node pool
-	const unsigned int spaceNeeded = triCount * 2;
+	const unsigned int spaceNeeded = primCount * 2;
 	if (allocatedBVHNodes < spaceNeeded)
 	{
 		ALIGNED_FREE( bvhNode );
 		ALIGNED_FREE( triIdx );
 		ALIGNED_FREE( fragment );
-		triCount = idxCount = primCount;
 		verts = (bvhvec4*)vertices;
-		triIdx = (unsigned int*)ALIGNED_MALLOC( triCount * sizeof( unsigned int ) );
+		triIdx = (unsigned int*)ALIGNED_MALLOC( primCount * sizeof( unsigned int ) );
 		bvhNode = (BVHNode*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode ) );
 		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
-		fragment = (Fragment*)ALIGNED_MALLOC( triCount * sizeof( Fragment ) );
+		fragment = (Fragment*)ALIGNED_MALLOC( primCount * sizeof( Fragment ) );
 	}
 	else assert( rebuildable == true);
+	triCount = idxCount = primCount;
 	unsigned int newNodePtr = 2;
 	struct FragSSE { __m128 bmin4, bmax4; };
 	FragSSE* frag4 = (FragSSE*)fragment;

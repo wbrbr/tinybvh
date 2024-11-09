@@ -12,8 +12,7 @@
 
 #define TRIANGLE_COUNT	8192
 
-struct TriVertex { float x, y, z, dummy; };
-TriVertex triangles[TRIANGLE_COUNT * 3];
+tinybvh::bvhvec4 triangles[TRIANGLE_COUNT * 3];
 
 float uniform_rand() { return (float)rand() / (float)RAND_MAX; }
 
@@ -23,9 +22,9 @@ int main()
 	for( int i = 0; i < TRIANGLE_COUNT; i++ )
 	{
 		// create a random triangle
-		TriVertex& v0 = triangles[i * 3 + 0];
-		TriVertex& v1 = triangles[i * 3 + 1];
-		TriVertex& v2 = triangles[i * 3 + 2];
+		tinybvh::bvhvec4& v0 = triangles[i * 3 + 0];
+		tinybvh::bvhvec4& v1 = triangles[i * 3 + 1];
+		tinybvh::bvhvec4& v2 = triangles[i * 3 + 2];
 		// triangle position, x/y/z = 0..1
 		float x = uniform_rand();
 		float y = uniform_rand();
@@ -51,7 +50,7 @@ int main()
 	// build a BVH over the scene
 	{
 		tinybvh::BVH bvh;
-		bvh.Build( (tinybvh::bvhvec4*)triangles, TRIANGLE_COUNT );
+		bvh.Build( triangles, TRIANGLE_COUNT );
 
 		// from here: play with the BVH!
 		int steps = bvh.Intersect( ray );
@@ -59,10 +58,10 @@ int main()
 	}
 
 #if defined(BVH_USEAVX)
-	// Same thing, using the AVX builder.
+	// same thing, using the AVX builder.
 	{
 		tinybvh::BVH bvh;
-		bvh.BuildAVX( (tinybvh::bvhvec4*)triangles, TRIANGLE_COUNT );
+		bvh.BuildAVX( triangles, TRIANGLE_COUNT );
 
 		int steps = bvh.Intersect( ray );
 		printf( "avx: nearest intersection: %f (found in %i traversal steps).\n", ray.hit.t, steps );
