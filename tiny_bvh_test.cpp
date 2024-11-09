@@ -44,16 +44,30 @@ int main()
 		v2.z = z + 0.1f * uniform_rand();
 	}
 
-	// build a BVH over the scene
-	tinybvh::BVH bvh;
-	bvh.Build( (tinybvh::bvhvec4*)triangles, TRIANGLE_COUNT );
-
-	// from here: play with the BVH!
 	tinybvh::bvhvec3 O( 0.5f, 0.5f, -1 );
 	tinybvh::bvhvec3 D( 0.1f, 0, 2 );
 	tinybvh::Ray ray( O, D );
-	int steps = bvh.Intersect( ray );
-	printf( "nearest intersection: %f (found in %i traversal steps).\n", ray.hit.t, steps );
+
+	// build a BVH over the scene
+	{
+		tinybvh::BVH bvh;
+		bvh.Build( (tinybvh::bvhvec4*)triangles, TRIANGLE_COUNT );
+
+		// from here: play with the BVH!
+		int steps = bvh.Intersect( ray );
+		printf( "std: nearest intersection: %f (found in %i traversal steps).\n", ray.hit.t, steps );
+	}
+
+#if defined(BVH_USEAVX)
+	// Same thing, using the AVX builder.
+	{
+		tinybvh::BVH bvh;
+		bvh.BuildAVX( (tinybvh::bvhvec4*)triangles, TRIANGLE_COUNT );
+
+		int steps = bvh.Intersect( ray );
+		printf( "avx: nearest intersection: %f (found in %i traversal steps).\n", ray.hit.t, steps );
+	}
+#endif
 
 	// all done.
 	return 0;
