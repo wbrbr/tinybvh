@@ -299,7 +299,7 @@ struct Ray
 class BVH
 {
 public:
-	enum BVHLayout { WALD_32BYTE = 1, AILA_LAINE, ALT_SOA, VERBOSE, BASIC_BVH4, BASIC_BVH8 };
+	enum BVHLayout { WALD_32BYTE = 1, AILA_LAINE, ALT_SOA, VERBOSE, BASIC_BVH4, BVH4_GPU, BASIC_BVH8 };
 	struct BVHNode
 	{
 		// 'Traditional' 32-byte BVH node layout, as proposed by Ingo Wald.
@@ -349,6 +349,25 @@ public:
 		unsigned int childCount, dummy1, dummy2, dummy3; // dummies are for alignment.
 		bool isLeaf() const { return triCount > 0; }
 	};
+	struct BVHNode4Alt
+	{
+		// 4-way BVH node, optimized for GPU rendering
+		struct aabb8 { unsigned char xmin, ymin, zmin, xmax, ymax, zmax; }; // quantized
+		bvhvec3 aabbMin; unsigned int c0Info;			// 16
+		bvhvec3 aabbExt; unsigned int c1Info;			// 16
+		aabb8 c0bounds, c1bounds; unsigned int c2Info;	// 16
+		aabb8 c2bounds, c3bounds; unsigned int c3Info;	// 16; total: 64 bytes
+		// childInfo, 32bit:
+		// msb:        0=interior, 1=leaf
+		// leaf:       16 bits: relative start of triangle data, 15 bits: triangle count.
+		// interior:   31 bits: child node address, in float4s from BVH data start.
+		// Triangle data: directly follows nodes with leaves. Per tri:
+		// - bvhvec4 vert0, vert1, vert2
+		// - uint vert0.w stores original triangle index.
+		// We can make the node smaller by storing child nodes sequentially, but
+		// there is no way we can shave off a full 16 bytes, unless aabbExt is stored
+		// as chars as well, as in CWBVH.
+	};
 	struct BVHNode8
 	{
 		// 8-wide (aka 'shallow') BVH layout.  
@@ -356,7 +375,7 @@ public:
 		bvhvec3 aabbMax; unsigned int triCount;
 		unsigned int child[8];
 		unsigned int childCount, dummy1, dummy2, dummy3; // dummies are for alignment.
-		bool isLeaf() const { return triCount > 0; }		
+		bool isLeaf() const { return triCount > 0; }
 	};
 	struct Fragment
 	{
@@ -377,6 +396,7 @@ public:
 		ALIGNED_FREE( alt2Node );
 		ALIGNED_FREE( verbose );
 		ALIGNED_FREE( bvh4Node );
+		ALIGNED_FREE( bvh4Alt );
 		ALIGNED_FREE( bvh8Node );
 		ALIGNED_FREE( triIdx );
 		ALIGNED_FREE( fragment );
@@ -386,6 +406,7 @@ public:
 		allocatedAlt2Nodes = 0;
 		allocatedVerbose = 0;
 		allocatedBVH4Nodes = 0;
+		allocatedAlt4Blocks = 0;
 		allocatedBVH8Nodes = 0;
 	}
 	float SAHCost( const unsigned int nodeIdx = 0 ) const
@@ -443,6 +464,7 @@ public:
 	BVHNodeAlt2* alt2Node = 0;		// BVH node in Aila & Laine (SoA version) format.
 	BVHNodeVerbose* verbose = 0;	// BVH node with additional info, for BVH optimizer.
 	BVHNode4* bvh4Node = 0;			// BVH node for 4-wide BVH.
+	bvhvec4* bvh4Alt = 0;			// 64-byte 4-wide BVH node for efficient GPU rendering.
 	BVHNode8* bvh8Node = 0;			// BVH node for 8-wide BVH.
 	bool rebuildable = true;		// rebuilds are safe only if a tree has not been converted.
 	// keep track of allocated buffer size to avoid 
@@ -452,12 +474,14 @@ public:
 	unsigned allocatedAlt2Nodes = 0;
 	unsigned allocatedVerbose = 0;
 	unsigned allocatedBVH4Nodes = 0;
+	unsigned allocatedAlt4Blocks = 0;
 	unsigned allocatedBVH8Nodes = 0;
 	unsigned usedBVHNodes = 0;
 	unsigned usedAltNodes = 0;
 	unsigned usedAlt2Nodes = 0;
 	unsigned usedVerboseNodes = 0;
 	unsigned usedBVH4Nodes = 0;
+	unsigned usedAlt4Blocks = 0;
 	unsigned usedBVH8Nodes = 0;
 };
 
@@ -777,6 +801,127 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 			nodeIdx = stack[--stackPtr];
 		}
 		usedBVH4Nodes = usedBVHNodes; // there will be gaps / unused nodes though.
+	}
+	else if (from == BASIC_BVH4 && to == BVH4_GPU)
+	{
+		// Convert a 4-wide BVH to a format suitable for GPU traversal. Layout:
+		// offs 0:   aabbMin (12 bytes), 4x quantized child xmin (4 bytes)
+		// offs 16:  aabbMax (12 bytes), 4x quantized child xmax (4 bytes)
+		// offs 32:  4x child ymin, then ymax, zmax, zmax (total 16 bytes)
+		// offs 48:  4x child node info: leaf if MSB set.
+		//           Leaf: 15 bits for tri count, 16 for offset
+		//           Interior: 32 bits for position of child node.
+		// Triangle data ('by value') immediately follows each leaf node.
+		unsigned int blocksNeeded = usedBVHNodes * 4; // here, 'block' is 16 bytes.
+		blocksNeeded += 6 * triCount; // this layout stores tris in the same buffer.
+		if (allocatedAlt4Blocks < blocksNeeded)
+		{
+			ALIGNED_FREE( bvh4Alt );
+			assert( sizeof( BVHNode4Alt ) == 64 );
+			assert( bvh4Node != 0 );
+			bvh4Alt = (bvhvec4*)ALIGNED_MALLOC( blocksNeeded * 16 );
+			allocatedAlt4Blocks = blocksNeeded;
+		}
+		memset( bvh4Alt, 0, 16 * blocksNeeded );
+		// start conversion
+	#ifdef __GNUC__
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+	#endif
+		unsigned int nodeIdx = 0, newAlt4Ptr = 0, stack[128], stackPtr = 0, retValPos = 0;
+		while (1)
+		{
+			const BVHNode4& node = bvh4Node[nodeIdx];
+			// convert BVH4 node - must be an interior node.
+			assert( !bvh4Node[nodeIdx].isLeaf() );
+			bvhvec4* nodeBase = bvh4Alt + newAlt4Ptr;
+			unsigned int baseAlt4Ptr = newAlt4Ptr;
+			newAlt4Ptr += 4;
+			nodeBase[0] = bvhvec4( node.aabbMin, 0 );
+			nodeBase[1] = bvhvec4( (node.aabbMax - node.aabbMin) * (1.0f / 255.0f), 0 );
+			BVHNode4* childNode[4] = {
+				&bvh4Node[node.child[0]], &bvh4Node[node.child[1]],
+				&bvh4Node[node.child[2]], &bvh4Node[node.child[3]]
+			};
+			// start with leaf child node conversion
+			unsigned int childInfo[4] = { 0, 0, 0, 0 }; // will store in final fields later
+			for (int i = 0; i < 4; i++) if (childNode[i]->isLeaf())
+			{
+				childInfo[i] = newAlt4Ptr - baseAlt4Ptr;
+				childInfo[i] |= childNode[i]->triCount << 16;
+				childInfo[i] |= 0x80000000;
+				for (unsigned int j = 0; j < childNode[i]->triCount; j++)
+				{
+					unsigned int t = triIdx[childNode[i]->firstTri + j];
+					bvhvec4 v0 = verts[t * 3 + 0];
+					v0.w = *(float*)&t; // as_float
+					bvh4Alt[newAlt4Ptr++] = v0;
+					bvh4Alt[newAlt4Ptr++] = verts[t * 3 + 1];
+					bvh4Alt[newAlt4Ptr++] = verts[t * 3 + 2];
+				}
+			}
+			// process interior nodes
+			for (int i = 0; i < 4; i++) if (!childNode[i]->isLeaf())
+			{
+				// childInfo[i] = node.child[i] == 0 ? 0 : GPUFormatBVH4( node.child[i] );
+				if (node.child[i] == 0) childInfo[i] = 0; else
+				{
+					stack[stackPtr++] = (unsigned)(((float*)&nodeBase[3] + i) - (float*)bvh4Alt);
+					stack[stackPtr++] = node.child[i];
+				}
+			}
+			// store child node bounds, quantized
+			const bvhvec3 extent = node.aabbMax - node.aabbMin;
+			bvhvec3 scale;
+			scale.x = extent.x > 1e-10f ? (254.999f / extent.x) : 0;
+			scale.y = extent.y > 1e-10f ? (254.999f / extent.y) : 0;
+			scale.z = extent.z > 1e-10f ? (254.999f / extent.z) : 0;
+			unsigned char* slot0 = (unsigned char*)&nodeBase[0] + 12;	// 4 chars
+			unsigned char* slot1 = (unsigned char*)&nodeBase[1] + 12;	// 4 chars
+			unsigned char* slot2 = (unsigned char*)&nodeBase[2];		// 16 chars
+			if (node.child[0])
+			{
+				const bvhvec3 relBMin = childNode[0]->aabbMin - node.aabbMin, relBMax = childNode[0]->aabbMax - node.aabbMin;
+				slot0[0] = (unsigned char)floorf( relBMin.x * scale.x ), slot1[0] = (unsigned char)ceilf( relBMax.x * scale.x );
+				slot2[0] = (unsigned char)floorf( relBMin.y * scale.y ), slot2[4] = (unsigned char)ceilf( relBMax.y * scale.y );
+				slot2[8] = (unsigned char)floorf( relBMin.z * scale.z ), slot2[12] = (unsigned char)ceilf( relBMax.z * scale.z );
+			}
+			if (node.child[1])
+			{
+				const bvhvec3 relBMin = childNode[1]->aabbMin - node.aabbMin, relBMax = childNode[1]->aabbMax - node.aabbMin;
+				slot0[1] = (unsigned char)floorf( relBMin.x * scale.x ), slot1[1] = (unsigned char)ceilf( relBMax.x * scale.x );
+				slot2[1] = (unsigned char)floorf( relBMin.y * scale.y ), slot2[5] = (unsigned char)ceilf( relBMax.y * scale.y );
+				slot2[9] = (unsigned char)floorf( relBMin.z * scale.z ), slot2[13] = (unsigned char)ceilf( relBMax.z * scale.z );
+			}
+			if (node.child[2])
+			{
+				const bvhvec3 relBMin = childNode[2]->aabbMin - node.aabbMin, relBMax = childNode[2]->aabbMax - node.aabbMin;
+				slot0[2] = (unsigned char)floorf( relBMin.x * scale.x ), slot1[2] = (unsigned char)ceilf( relBMax.x * scale.x );
+				slot2[2] = (unsigned char)floorf( relBMin.y * scale.y ), slot2[6] = (unsigned char)ceilf( relBMax.y * scale.y );
+				slot2[10] = (unsigned char)floorf( relBMin.z * scale.z ), slot2[14] = (unsigned char)ceilf( relBMax.z * scale.z );
+			}
+			if (node.child[3])
+			{
+				const bvhvec3 relBMin = childNode[3]->aabbMin - node.aabbMin, relBMax = childNode[3]->aabbMax - node.aabbMin;
+				slot0[3] = (unsigned char)floorf( relBMin.x * scale.x ), slot1[3] = (unsigned char)ceilf( relBMax.x * scale.x );
+				slot2[3] = (unsigned char)floorf( relBMin.y * scale.y ), slot2[7] = (unsigned char)ceilf( relBMax.y * scale.y );
+				slot2[11] = (unsigned char)floorf( relBMin.z * scale.z ), slot2[15] = (unsigned char)ceilf( relBMax.z * scale.z );
+			}
+			// finalize node
+			nodeBase[3] = bvhvec4(
+				*(float*)&childInfo[0], *(float*)&childInfo[1],
+				*(float*)&childInfo[2], *(float*)&childInfo[3]
+			);
+			// pop new work from the stack
+			if (retValPos > 0) ((unsigned int*)bvh4Alt)[retValPos] = baseAlt4Ptr;
+			if (stackPtr == 0) break;
+			nodeIdx = stack[--stackPtr];
+			retValPos = stack[--stackPtr];
+		}
+	#ifdef __GNUC__
+	#pragma GCC diagnostic pop
+	#endif
+		usedAlt4Blocks = newAlt4Ptr;
 	}
 	else if (from == WALD_32BYTE && to == BASIC_BVH8)
 	{
@@ -1846,7 +1991,7 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 		}
 	}
 	return steps;
-		}
+}
 
 #else
 
@@ -1859,7 +2004,7 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 
 #endif // BVH_USEAVX
 
-	} // namespace tinybvh
+} // namespace tinybvh
 
 #endif // TINYBVH_IMPLEMENTATION
 
