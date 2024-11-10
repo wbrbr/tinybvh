@@ -299,7 +299,7 @@ struct Ray
 class BVH
 {
 public:
-	enum BVHLayout { WALD_32BYTE = 1, AILA_LAINE, ALT_SOA, VERBOSE };
+	enum BVHLayout { WALD_32BYTE = 1, AILA_LAINE, ALT_SOA, VERBOSE, BASIC_BVH4, BASIC_BVH8 };
 	struct BVHNode
 	{
 		// 'Traditional' 32-byte BVH node layout, as proposed by Ingo Wald.
@@ -340,6 +340,24 @@ public:
 		unsigned int triCount, firstTri, parent, sibling;
 		bool isLeaf() const { return triCount > 0; }
 	};
+	struct BVHNode4
+	{
+		// 4-wide (aka 'shallow') BVH layout.  
+		bvhvec3 aabbMin; unsigned int firstTri;
+		bvhvec3 aabbMax; unsigned int triCount;
+		unsigned int child[4];
+		unsigned int childCount, dummy1, dummy2, dummy3; // dummies are for alignment.
+		bool isLeaf() const { return triCount > 0; }
+	};
+	struct BVHNode8
+	{
+		// 8-wide (aka 'shallow') BVH layout.  
+		bvhvec3 aabbMin; unsigned int firstTri;
+		bvhvec3 aabbMax; unsigned int triCount;
+		unsigned int child[8];
+		unsigned int childCount, dummy1, dummy2, dummy3; // dummies are for alignment.
+		bool isLeaf() const { return triCount > 0; }		
+	};
 	struct Fragment
 	{
 		// A fragment stores the bounds of an input primitive. The name 'Fragment' is from
@@ -358,6 +376,8 @@ public:
 		ALIGNED_FREE( altNode ); // Note: no action if pointer is null
 		ALIGNED_FREE( alt2Node );
 		ALIGNED_FREE( verbose );
+		ALIGNED_FREE( bvh4Node );
+		ALIGNED_FREE( bvh8Node );
 		ALIGNED_FREE( triIdx );
 		ALIGNED_FREE( fragment );
 		bvhNode = 0, triIdx = 0, fragment = 0;
@@ -365,6 +385,8 @@ public:
 		allocatedAltNodes = 0;
 		allocatedAlt2Nodes = 0;
 		allocatedVerbose = 0;
+		allocatedBVH4Nodes = 0;
+		allocatedBVH8Nodes = 0;
 	}
 	float SAHCost( const unsigned int nodeIdx = 0 ) const
 	{
@@ -418,6 +440,8 @@ public:
 	BVHNodeAlt* altNode = 0;		// BVH node in Aila & Laine format.
 	BVHNodeAlt2* alt2Node = 0;		// BVH node in Aila & Laine (SoA version) format.
 	BVHNodeVerbose* verbose = 0;	// BVH node with additional info, for BVH optimizer.
+	BVHNode4* bvh4Node = 0;			// BVH node for 4-wide BVH.
+	BVHNode8* bvh8Node = 0;			// BVH node for 8-wide BVH.
 	bool rebuildable = true;		// rebuilds are safe only if a tree has not been converted.
 	// keep track of allocated buffer size to avoid 
 	// repeated allocation during layout conversion.
@@ -425,10 +449,14 @@ public:
 	unsigned allocatedAltNodes = 0;
 	unsigned allocatedAlt2Nodes = 0;
 	unsigned allocatedVerbose = 0;
+	unsigned allocatedBVH4Nodes = 0;
+	unsigned allocatedBVH8Nodes = 0;
 	unsigned usedBVHNodes = 0;
 	unsigned usedAltNodes = 0;
 	unsigned usedAlt2Nodes = 0;
 	unsigned usedVerboseNodes = 0;
+	unsigned usedBVH4Nodes = 0;
+	unsigned usedBVH8Nodes = 0;
 };
 
 } // namespace tinybvh
@@ -467,7 +495,7 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
 		fragment = (Fragment*)ALIGNED_MALLOC( primCount * sizeof( Fragment ) );
 	}
-	else assert( rebuildable == true);
+	else assert( rebuildable == true );
 	idxCount = triCount = primCount;
 	// reset node pool
 	unsigned int newNodePtr = 2;
@@ -666,16 +694,12 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 		memset( verbose, 0, sizeof( BVHNodeVerbose ) * spaceNeeded );
 		verbose[0].parent = 0xffffffff; // root sentinel
 		// convert
-		unsigned int nodeIdx = 0;
-		unsigned int parent = 0xffffffff;
-		unsigned int stack[128], stackPtr = 0;
+		unsigned int nodeIdx = 0, parent = 0xffffffff, stack[128], stackPtr = 0;
 		while (1)
 		{
 			const BVHNode& node = bvhNode[nodeIdx];
-			verbose[nodeIdx].aabbMin = node.aabbMin;
-			verbose[nodeIdx].aabbMax = node.aabbMax;
-			verbose[nodeIdx].triCount = node.triCount;
-			verbose[nodeIdx].parent = parent;
+			verbose[nodeIdx].aabbMin = node.aabbMin, verbose[nodeIdx].aabbMax = node.aabbMax;
+			verbose[nodeIdx].triCount = node.triCount, verbose[nodeIdx].parent = parent;
 			if (node.isLeaf())
 			{
 				verbose[nodeIdx].firstTri = node.leftFirst;
@@ -694,6 +718,120 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 			}
 		}
 		usedVerboseNodes = usedBVHNodes;
+	}
+	else if (from == WALD_32BYTE && to == BASIC_BVH4)
+	{
+		// allocate space
+		const unsigned int spaceNeeded = usedBVHNodes;
+		if (allocatedBVH4Nodes < spaceNeeded)
+		{
+			ALIGNED_FREE( bvh4Node );
+			bvh4Node = (BVHNode4*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode4 ) );
+			allocatedBVH4Nodes = spaceNeeded;
+		}
+		memset( bvh4Node, 0, sizeof( BVHNode4 ) * spaceNeeded );
+		// create an mbvh node for each bvh2 node
+		for (unsigned int i = 0; i < usedBVHNodes; i++) if (i != 1)
+		{
+			BVHNode& orig = bvhNode[i];
+			BVHNode4& node4 = bvh4Node[i];
+			node4.aabbMin = orig.aabbMin, node4.aabbMax = orig.aabbMax;
+			if (orig.isLeaf()) node4.triCount = orig.triCount, node4.firstTri = orig.leftFirst;
+			else node4.child[0] = orig.leftFirst, node4.child[1] = orig.leftFirst + 1, node4.childCount = 2;
+		}
+		// collapse
+		unsigned int stack[128], stackPtr = 1, nodeIdx = stack[0] = 0; // i.e., root node
+		while (1)
+		{
+			BVHNode4& node = bvh4Node[nodeIdx];
+			while (node.childCount < 4)
+			{
+				int bestChild = -1;
+				float bestChildSA = 0;
+				for (unsigned int i = 0; i < node.childCount; i++)
+				{
+					// see if we can adopt child i
+					const BVHNode4& child = bvh4Node[node.child[i]];
+					if (!child.isLeaf() && node.childCount - 1 + child.childCount <= 4)
+					{
+						const float childSA = SA( child.aabbMin, child.aabbMax );
+						if (childSA > bestChildSA) bestChild = i, bestChildSA = childSA;
+					}
+				}
+				if (bestChild == -1) break; // could not adopt
+				const BVHNode4& child = bvh4Node[node.child[bestChild]];
+				node.child[bestChild] = child.child[0];
+				for (unsigned int i = 1; i < child.childCount; i++)
+					node.child[node.childCount++] = child.child[i];
+			}
+			// we're done with the node; proceed with the children
+			for (unsigned int i = 0; i < node.childCount; i++)
+			{
+				const unsigned int childIdx = node.child[i];
+				const BVHNode4& child = bvh4Node[childIdx];
+				if (!child.isLeaf()) stack[stackPtr++] = childIdx;
+			}
+			if (stackPtr == 0) break;
+			nodeIdx = stack[--stackPtr];
+		}
+		usedBVH4Nodes = usedBVHNodes; // there will be gaps / unused nodes though.
+	}
+	else if (from == WALD_32BYTE && to == BASIC_BVH8)
+	{
+		// allocate space
+		const unsigned int spaceNeeded = usedBVHNodes;
+		if (allocatedBVH8Nodes < spaceNeeded)
+		{
+			ALIGNED_FREE( bvh8Node );
+			bvh8Node = (BVHNode8*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode8 ) );
+			allocatedBVH8Nodes = spaceNeeded;
+		}
+		memset( bvh8Node, 0, sizeof( BVHNode4 ) * spaceNeeded );
+		// create an mbvh node for each bvh2 node
+		for (unsigned int i = 0; i < usedBVHNodes; i++) if (i != 1)
+		{
+			BVHNode& orig = bvhNode[i];
+			BVHNode8& node8 = bvh8Node[i];
+			node8.aabbMin = orig.aabbMin, node8.aabbMax = orig.aabbMax;
+			if (orig.isLeaf()) node8.triCount = orig.triCount, node8.firstTri = orig.leftFirst;
+			else node8.child[0] = orig.leftFirst, node8.child[1] = orig.leftFirst + 1, node8.childCount = 2;
+		}
+		// collapse
+		unsigned int stack[128], stackPtr = 1, nodeIdx = stack[0] = 0; // i.e., root node
+		while (1)
+		{
+			BVHNode8& node = bvh8Node[nodeIdx];
+			while (node.childCount < 8)
+			{
+				int bestChild = -1;
+				float bestChildSA = 0;
+				for (unsigned int i = 0; i < node.childCount; i++)
+				{
+					// see if we can adopt child i
+					const BVHNode8& child = bvh8Node[node.child[i]];
+					if ((!child.isLeaf()) && (node.childCount - 1 + child.childCount) <= 8)
+					{
+						const float childSA = SA( child.aabbMin, child.aabbMax );
+						if (childSA > bestChildSA) bestChild = i, bestChildSA = childSA;
+					}
+				}
+				if (bestChild == -1) break; // could not adopt
+				const BVHNode8& child = bvh8Node[node.child[bestChild]];
+				node.child[bestChild] = child.child[0];
+				for (unsigned int i = 1; i < child.childCount; i++)
+					node.child[node.childCount++] = child.child[i];
+			}
+			// we're done with the node; proceed with the children
+			for (unsigned int i = 0; i < node.childCount; i++)
+			{
+				const unsigned int childIdx = node.child[i];
+				const BVHNode8& child = bvh8Node[childIdx];
+				if (!child.isLeaf()) stack[stackPtr++] = childIdx;
+			}
+			if (stackPtr == 0) break;
+			nodeIdx = stack[--stackPtr];
+		}
+		usedBVH8Nodes = usedBVHNodes; // there will be gaps / unused nodes though.
 	}
 	else if (from == VERBOSE && to == WALD_32BYTE)
 	{
@@ -726,8 +864,7 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 			{
 				bvhNode[dstNodeIdx].leftFirst = newNodePtr;
 				unsigned int srcRightIdx = srcNode.right;
-				srcNodeIdx = srcNode.left;
-				dstNodeIdx = newNodePtr++;
+				srcNodeIdx = srcNode.left, dstNodeIdx = newNodePtr++;
 				srcStack[stackPtr] = srcRightIdx;
 				dstStack[stackPtr++] = newNodePtr++;
 			}
@@ -1157,7 +1294,7 @@ void BVH::IntersectTri( Ray& ray, const unsigned int idx ) const
 	{
 		// register a hit: ray is shortened to t
 		ray.hit.t = t, ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx;
-}
+	}
 }
 
 // IntersectAABB
@@ -1255,7 +1392,7 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 		memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
 		fragment = (Fragment*)ALIGNED_MALLOC( primCount * sizeof( Fragment ) );
 	}
-	else assert( rebuildable == true);
+	else assert( rebuildable == true );
 	triCount = idxCount = primCount;
 	unsigned int newNodePtr = 2;
 	struct FragSSE { __m128 bmin4, bmax4; };
@@ -1367,6 +1504,7 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned int primCount )
 		// fetch subdivision task from stack
 		if (taskCount == 0) break; else nodeIdx = task[--taskCount];
 	}
+	usedBVHNodes = newNodePtr;
 }
 #if defined(_MSC_VER)
 #pragma warning ( pop ) // restore 4701
@@ -1658,7 +1796,7 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 		}
 	}
 	return steps;
-}
+		}
 
 #else
 
@@ -1671,7 +1809,7 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 
 #endif // BVH_USEAVX
 
-} // namespace tinybvh
+	} // namespace tinybvh
 
 #endif // TINYBVH_IMPLEMENTATION
 
