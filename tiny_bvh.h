@@ -675,7 +675,7 @@ void BVH::BuildHQ( const bvhvec4* vertices, const unsigned int primCount )
 	const float rootArea = (root.aabbMax - root.aabbMin).halfArea();
 	// subdivide recursively
 	struct Task { unsigned int node, sliceStart, sliceEnd, dummy; };
-	__declspec(align(64)) Task task[256];
+	ALIGNED(64) Task task[256];
 	unsigned int taskCount = 0, nodeIdx = 0, sliceStart = 0, sliceEnd = triCount + slack;
 	const bvhvec3 minDim = (root.aabbMax - root.aabbMin) * 1e-7f /* don't touch, carefully picked */;
 	bvhvec3 bestLMin = 0, bestLMax = 0, bestRMin = 0, bestRMax = 0;
@@ -735,7 +735,7 @@ void BVH::BuildHQ( const bvhvec4* vertices, const unsigned int primCount )
 			}
 			// consider a spatial split
 			bool spatial = false;
-		#if 0
+		#if 1
 			unsigned int NL[BVHBINS - 1], NR[BVHBINS - 1], budget = sliceEnd - sliceStart;
 			bvhvec3 spatialUnion = bestLMax - bestRMin;
 			float spatialOverlap = (spatialUnion.halfArea()) / rootArea;
@@ -833,8 +833,8 @@ void BVH::BuildHQ( const bvhvec4* vertices, const unsigned int primCount )
 			}
 			else
 			{
-				// in-place partitioning
-				unsigned int j = node.leftFirst + node.triCount, src = node.leftFirst;
+				// in-place partitioning - TODO check me.
+				unsigned int src = node.leftFirst;
 				const float rpd = rpd3.cell[bestAxis], nmin = nmin3.cell[bestAxis];
 				for (unsigned int i = 0; i < node.triCount; i++)
 				{
