@@ -90,10 +90,6 @@ void Init()
 	bvh.Build( triangles, verts / 3 );
 #endif
 
-	// testing BVH4, BVH8
-	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH4 );
-	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH8 );
-
 #endif
 
 }

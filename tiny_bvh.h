@@ -419,6 +419,8 @@ public:
 private:
 	int Intersect_Wald32Byte( Ray& ray ) const;
 	int Intersect_AilaLaine( Ray& ray ) const;
+	int Intersect_BasicBVH4( Ray& ray ) const;
+	int Intersect_BasicBVH8( Ray& ray ) const;
 	int Intersect_AltSoA( Ray& ray ) const; // requires BVH_USEAVX
 	void IntersectTri( Ray& ray, const unsigned int triIdx ) const;
 	static float IntersectAABB( const Ray& ray, const bvhvec3& aabbMin, const bvhvec3& aabbMax );
@@ -1018,6 +1020,12 @@ int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 	case ALT_SOA:
 		return Intersect_AltSoA( ray );
 		break;
+	case BASIC_BVH4:
+		return Intersect_BasicBVH4( ray );
+		break;
+	case BASIC_BVH8:
+		return Intersect_BasicBVH8( ray );
+		break;
 	default:
 		assert( false );
 	};
@@ -1097,6 +1105,48 @@ int BVH::Intersect_AilaLaine( Ray& ray ) const
 			node = altNode + lidx;
 			if (dist2 != 1e30f) stack[stackPtr++] = altNode + ridx;
 		}
+	}
+	return steps;
+}
+
+//  Intersect4. For testing the converted data only; not efficient.
+int BVH::Intersect_BasicBVH4( Ray& ray ) const
+{
+	BVHNode4* node = &bvh4Node[0], * stack[64];
+	unsigned int stackPtr = 0, steps = 0;
+	while (1)
+	{
+		steps++;
+		if (node->isLeaf()) for (unsigned int i = 0; i < node->triCount; i++)
+			IntersectTri( ray, triIdx[node->firstTri + i] );
+		else for (unsigned int i = 0; i < node->childCount; i++)
+		{
+			BVHNode4* child = bvh4Node + node->child[i];
+			float dist = IntersectAABB( ray, child->aabbMin, child->aabbMax );
+			if (dist < 1e30f) stack[stackPtr++] = child;
+		}
+		if (stackPtr == 0) break; else node = stack[--stackPtr];
+	}
+	return steps;
+}
+
+//  Intersect4. For testing the converted data only; not efficient.
+int BVH::Intersect_BasicBVH8( Ray& ray ) const
+{
+	BVHNode8* node = &bvh8Node[0], * stack[128];
+	unsigned int stackPtr = 0, steps = 0;
+	while (1)
+	{
+		steps++;
+		if (node->isLeaf()) for (unsigned int i = 0; i < node->triCount; i++)
+			IntersectTri( ray, triIdx[node->firstTri + i] );
+		else for (unsigned int i = 0; i < node->childCount; i++)
+		{
+			BVHNode8* child = bvh8Node + node->child[i];
+			float dist = IntersectAABB( ray, child->aabbMin, child->aabbMax );
+			if (dist < 1e30f) stack[stackPtr++] = child;
+		}
+		if (stackPtr == 0) break; else node = stack[--stackPtr];
 	}
 	return steps;
 }
