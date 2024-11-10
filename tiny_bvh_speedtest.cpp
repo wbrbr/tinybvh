@@ -18,7 +18,6 @@
 // tests to perform
 #define BUILD_REFERENCE
 #define BUILD_AVX
-// #define NANORT_BUILD // disabled by default to avoid warnings.
 #define TRAVERSE_2WAY_ST
 #define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_SOA2WAY_ST
@@ -26,7 +25,6 @@
 #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_2WAY_MT_DIVERGENT
 #define TRAVERSE_OPTIMIZED_ST
-// #define NANORT_TRAVERSE
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
 
@@ -35,14 +33,6 @@ using namespace tinybvh;
 bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
 int verts = 0;
 BVH bvh;
-
-#ifdef NANORT_BUILD
-using namespace std; // ugly, sorry
-#include "external/nanort.h"
-static nanort::BVHAccel<float> accel;
-static float* nanort_verts = 0;
-static unsigned int* nanort_faces = 0;
-#endif
 
 #if defined EMBREE_BUILD || defined EMBREE_TRAVERSE
 #include "embree4/rtcore.h"
@@ -179,32 +169,6 @@ int main()
 	printf( "%7.2fms for %7i triangles ", buildTimeAVX * 1000.0f, verts / 3 );
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 #endif
-#endif
-
-#ifdef NANORT_BUILD
-
-	// convert data to correct format for NanoRT and build a BVH
-	// https://github.com/lighttransport/nanort
-	nanort_verts = new float[verts * 3];
-	nanort_faces = new unsigned int[verts];
-	for (int i = 0; i < verts; i++)
-		nanort_verts[i * 3 + 0] = triangles[i].x,
-		nanort_verts[i * 3 + 1] = triangles[i].y,
-		nanort_verts[i * 3 + 2] = triangles[i].z,
-		nanort_faces[i] = i; // Note: not using shared vertices.
-	nanort::TriangleMesh<float> triangle_mesh( nanort_verts, nanort_faces, sizeof( float ) * 3 );
-	nanort::TriangleSAHPred<float> triangle_pred( nanort_verts, nanort_faces, sizeof( float ) * 3 );
-	nanort::BVHBuildOptions<float> build_options; // BVH build option(optional)
-	// measure single-core nanort bvh construction time - default settings
-	printf( "- NanoRT builder:    " );
-	t.reset();
-	for (int pass = 0; pass < 3; pass++)
-		accel.Build( verts / 3, triangle_mesh, triangle_pred, build_options );
-	float nanoBuildTime = t.elapsed() / 3.0f;
-	printf( "%7.2fms for %7i triangles ", nanoBuildTime * 1000.0f, verts / 3 );
-	nanort::BVHBuildStatistics stats = accel.GetStatistics();
-	printf( "- %6d nodes\n", stats.num_leaf_nodes );
-
 #endif
 
 #if defined EMBREE_BUILD || defined EMBREE_TRAVERSE
@@ -398,32 +362,6 @@ int main()
 	}
 	mrays = (float)N / traceTimeEmbree;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeEmbree * 1000, (float)N * 1e-6f, mrays * 1e-6f );
-
-#endif
-
-#if defined NANORT_TRAVERSE && defined NANORT_BUILD
-
-	// trace every 16th ray using NanoRT to estimate average performance
-	printf( "- CPU, coherent,   NanoRT BVH, NanoRT  ST:  " );
-	nanort::Ray<float> ray;
-	nanort::BVHTraceOptions trace_options; // library default options
-	nanort::TriangleIntersector<float> triangle_intersector( nanort_verts, nanort_faces, sizeof( float ) * 3 );
-	t.reset();
-	for (int i = 0; i < N; i += 16)
-	{
-		ray.org[0] = rays[i].O.x, ray.org[1] = rays[i].O.y, ray.org[2] = rays[i].O.z;
-		ray.dir[0] = rays[i].D.x, ray.dir[1] = rays[i].D.y, ray.dir[2] = rays[i].D.z;
-		ray.min_t = 0, ray.max_t = rays[i].hit.t;
-		nanort::TriangleIntersection<float> isect;
-		bool hit = accel.Traverse( ray, triangle_intersector, &isect, trace_options );
-		if (hit)
-			rays[i].hit.t = isect.t,
-			rays[i].hit.u = isect.u, rays[i].hit.v = isect.v,
-			rays[i].hit.prim = isect.prim_id;
-	}
-	float traceTimeNano = t.elapsed();
-	float krays = ((float)N / 16.0f) / traceTimeNano;
-	printf( "%6.1fms for %6.2fM rays => %6.2fKRay/s\n", traceTimeNano * 1000, (float)N * 1e-6f / 16.0f, krays * 1e-3f );
 
 #endif
 

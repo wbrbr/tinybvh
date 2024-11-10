@@ -1,6 +1,5 @@
 #include "external/fenster.h" // https://github.com/zserge/fenster
 
-// #define USE_NANORT // enable to verify correct implementation
 // #define USE_EMBREE // enable to verify correct implementation, win64 only for now.
 // #define LOADSPONZA
 
@@ -9,12 +8,7 @@
 
 using namespace tinybvh;
 
-#if defined(USE_NANORT)
-#include "external/nanort.h"
-static nanort::BVHAccel<float> accel;
-static float* nanort_verts = 0;
-static unsigned int* nanort_faces = 0;
-#elif defined(USE_EMBREE)
+#if defined(USE_EMBREE)
 #include "embree4/rtcore.h"
 static RTCScene embreeScene;
 void embreeError( void* userPtr, enum RTCError error, const char* str )
@@ -69,21 +63,7 @@ void Init()
 	sphere_flake( 0, 0, 0, 1.5f );
 #endif
 
-#if defined USE_NANORT
-
-	// convert data to correct format for NanoRT and build a BVH
-	// https://github.com/lighttransport/nanort
-	nanort_verts = new float[verts * 3];
-	nanort_faces = new unsigned int[verts];
-	for (int i = 0; i < verts; i++)
-		nanort_verts[i * 3 + 0] = triangles[i].x, nanort_verts[i * 3 + 1] = triangles[i].y,
-		nanort_verts[i * 3 + 2] = triangles[i].z, nanort_faces[i] = i; // Note: not using shared vertices.
-	nanort::TriangleMesh<float> triangle_mesh( nanort_verts, nanort_faces, sizeof( float ) * 3 );
-	nanort::TriangleSAHPred<float> triangle_pred( nanort_verts, nanort_faces, sizeof( float ) * 3 );
-	nanort::BVHBuildOptions<float> build_options; // BVH build option(optional)
-	accel.Build( verts / 3, triangle_mesh, triangle_pred, build_options );
-
-#elif defined USE_EMBREE
+#if defined USE_EMBREE
 
 	RTCDevice embreeDevice = rtcNewDevice( NULL );
 	rtcSetDeviceErrorFunction( embreeDevice, embreeError, NULL );
@@ -109,6 +89,10 @@ void Init()
 #else
 	bvh.Build( triangles, verts / 3 );
 #endif
+
+	// testing BVH4, BVH8
+	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH4 );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH8 );
 
 #endif
 
@@ -148,21 +132,7 @@ void Tick( uint32_t* buf )
 	}
 
 	// trace primary rays
-#if defined(USE_NANORT)
-	nanort::Ray<float> ray;
-	nanort::BVHTraceOptions trace_options; // optional
-	nanort::TriangleIntersector<float> triangle_intersector( nanort_verts, nanort_faces, sizeof( float ) * 3 );
-	for (int i = 0; i < N; i += 16)
-	{
-		ray.org[0] = rays[i].O.x, ray.org[1] = rays[i].O.y, ray.org[2] = rays[i].O.z;
-		ray.dir[0] = rays[i].D.x, ray.dir[1] = rays[i].D.y, ray.dir[2] = rays[i].D.z;
-		ray.min_t = 0, ray.max_t = rays[i].hit.t;
-		nanort::TriangleIntersection<float> isect;
-		if (accel.Traverse( ray, triangle_intersector, &isect, trace_options ))
-			rays[i].hit.t = isect.t, rays[i].hit.prim = isect.prim_id,
-			rays[i].hit.u = isect.u, rays[i].hit.v = isect.v;
-	}
-#elif defined(USE_EMBREE)
+#if defined(USE_EMBREE)
 	struct RTCRayHit rayhit;
 	for (int i = 0; i < N; i++)
 	{
@@ -195,11 +165,7 @@ void Tick( uint32_t* buf )
 				bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
 				avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
 			}
-		#if defined USE_NANORT
-			int c = (int)(255.9f * avg); // we trace only every 16th ray with NanoRT
-		#else
 			int c = (int)(15.9f * avg);
-		#endif
 			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
 		}
 	}
