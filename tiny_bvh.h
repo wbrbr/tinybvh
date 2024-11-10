@@ -22,7 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-// Nov 09, '24: version 0.4.0 : Layouts, BVH optimizer
+// Nov 10, '24: version 0.4.2 : BVH4/8, gpu-friendly BVH4.
+// Nov 09, '24: version 0.4.0 : Layouts, BVH optimizer.
 // Nov 08, '24: version 0.3.0
 // Oct 30, '24: version 0.1.0 : Initial release.
 // Oct 29, '24: version 0.0.1 : Establishing interface.
@@ -221,6 +222,7 @@ inline bvhvec4 operator*( float b, const bvhvec4& a ) { return bvhvec4( b * a.x,
 inline bvhvec2 operator/( float b, const bvhvec2& a ) { return bvhvec2( b / a.x, b / a.y ); }
 inline bvhvec3 operator/( float b, const bvhvec3& a ) { return bvhvec3( b / a.x, b / a.y, b / a.z ); }
 inline bvhvec4 operator/( float b, const bvhvec4& a ) { return bvhvec4( b / a.x, b / a.y, b / a.z, b / a.w ); }
+inline bvhvec3 operator*=( bvhvec3& a, const float b ) { return bvhvec3( a.x * b, a.y * b, a.z * b ); }
 
 // Vector math: cross and dot.
 static inline bvhvec3 cross( const bvhvec3& a, const bvhvec3& b )
@@ -430,6 +432,7 @@ public:
 		return retVal;
 	}
 	void Build( const bvhvec4* vertices, const unsigned int primCount );
+	void BuildHQ( const bvhvec4* vertices, const unsigned int primCount );
 	void BuildAVX( const bvhvec4* vertices, const unsigned int primCount );
 	void Convert( BVHLayout from, BVHLayout to, bool deleteOriginal = false );
 	void Optimize();
@@ -450,6 +453,7 @@ private:
 		bvhvec3 e = aabbMax - aabbMin; // extent of the node
 		return e.x * e.y + e.y * e.z + e.z * e.x;
 	}
+	bool ClipFrag( const Fragment& orig, Fragment& newFrag, bvhvec3 bmin, bvhvec3 bmax, bvhvec3 minDim );
 	void RefitUpVerbose( unsigned int nodeIdx );
 	unsigned int FindBestNewPosition( const unsigned int Lid );
 	void ReinsertNodeVerbose( const unsigned int Lid, const unsigned int Nid, const unsigned int origin );
@@ -467,6 +471,7 @@ public:
 	bvhvec4* bvh4Alt = 0;			// 64-byte 4-wide BVH node for efficient GPU rendering.
 	BVHNode8* bvh8Node = 0;			// BVH node for 8-wide BVH.
 	bool rebuildable = true;		// rebuilds are safe only if a tree has not been converted.
+	bool refittable = true;			// refits are safe only if the tree has no spatial splits.
 	// keep track of allocated buffer size to avoid 
 	// repeated allocation during layout conversion.
 	unsigned allocatedBVHNodes = 0;
@@ -620,6 +625,304 @@ void BVH::Build( const bvhvec4* vertices, const unsigned int primCount )
 		if (taskCount == 0) break; else nodeIdx = task[--taskCount];
 	}
 	usedBVHNodes = newNodePtr;
+}
+
+// SBVH builder.
+// Besides the regular object splits used in the reference builder, the SBVH
+// algorithm also considers spatial splits, where primitives may be cut in
+// multiple parts. This increases primitive count but may reduce overlap of
+// BVH nodes. The cost of each option is considered per split. 
+// For typical geometry, SBVH yields a tree that can be traversed 25% faster. 
+// This comes at greatly increased construction cost, making the SBVH 
+// primarily useful for static geometry.
+// TODO - UNDER CONSTRUCTION - NOT PRODUCING CORRECT TREES JUST YET
+void BVH::BuildHQ( const bvhvec4* vertices, const unsigned int primCount )
+{
+	// allocate on first build
+	const unsigned int slack = primCount >> 2; // for split prims
+	const unsigned int spaceNeeded = primCount * 3;
+	if (allocatedBVHNodes < spaceNeeded)
+	{
+		ALIGNED_FREE( bvhNode );
+		ALIGNED_FREE( triIdx );
+		ALIGNED_FREE( fragment );
+		bvhNode = (BVHNode*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode ) );
+		allocatedBVHNodes = spaceNeeded;
+		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
+		triIdx = (unsigned int*)ALIGNED_MALLOC( (primCount + slack) * sizeof( unsigned int ) );
+		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
+		fragment = (Fragment*)ALIGNED_MALLOC( (primCount + slack) * sizeof( Fragment ) );
+	}
+	else assert( rebuildable == true );
+	idxCount = primCount + slack;
+	triCount = primCount;
+	unsigned int* triIdxA = triIdx, * triIdxB = new unsigned int[triCount + slack];
+	memset( triIdxA, 0, (triCount + slack) * 4 );
+	memset( triIdxB, 0, (triCount + slack) * 4 );
+	// reset node pool
+	unsigned int newNodePtr = 2, nextFrag = triCount;
+	// assign all triangles to the root node
+	BVHNode& root = bvhNode[0];
+	root.leftFirst = 0, root.triCount = triCount, root.aabbMin = bvhvec3( 1e30f ), root.aabbMax = bvhvec3( -1e30f );
+	// initialize fragments and initialize root node bounds
+	for (unsigned int i = 0; i < triCount; i++)
+	{
+		fragment[i].bmin = tinybvh_min( tinybvh_min( verts[i * 3], verts[i * 3 + 1] ), verts[i * 3 + 2] );
+		fragment[i].bmax = tinybvh_max( tinybvh_max( verts[i * 3], verts[i * 3 + 1] ), verts[i * 3 + 2] );
+		root.aabbMin = tinybvh_min( root.aabbMin, fragment[i].bmin );
+		root.aabbMax = tinybvh_max( root.aabbMax, fragment[i].bmax ), triIdx[i] = i;
+	}
+	const float rootArea = (root.aabbMax - root.aabbMin).halfArea();
+	// subdivide recursively
+	struct Task { unsigned int node, sliceStart, sliceEnd, dummy; };
+	__declspec(align(64)) Task task[256];
+	unsigned int taskCount = 0, nodeIdx = 0, sliceStart = 0, sliceEnd = triCount + slack;
+	const bvhvec3 minDim = (root.aabbMax - root.aabbMin) * 1e-7f /* don't touch, carefully picked */;
+	bvhvec3 bestLMin = 0, bestLMax = 0, bestRMin = 0, bestRMax = 0;
+	while (1)
+	{
+		while (1)
+		{
+			BVHNode& node = bvhNode[nodeIdx];
+			// find optimal object split
+			bvhvec3 binMin[3][BVHBINS], binMax[3][BVHBINS];
+			for (unsigned int a = 0; a < 3; a++) for (unsigned int i = 0; i < BVHBINS; i++) binMin[a][i] = 1e30f, binMax[a][i] = -1e30f;
+			unsigned int count[3][BVHBINS];
+			memset( count, 0, BVHBINS * 3 * sizeof( unsigned int ) );
+			const bvhvec3 rpd3 = bvhvec3( BVHBINS / (node.aabbMax - node.aabbMin) ), nmin3 = node.aabbMin;
+			for (unsigned int i = 0; i < node.triCount; i++) // process all tris for x,y and z at once
+			{
+				const unsigned int fi = triIdx[node.leftFirst + i];
+				bvhint3 bi = bvhint3( ((fragment[fi].bmin + fragment[fi].bmax) * 0.5f - nmin3) * rpd3 );
+				bi.x = tinybvh_clamp( bi.x, 0, BVHBINS - 1 );
+				bi.y = tinybvh_clamp( bi.y, 0, BVHBINS - 1 );
+				bi.z = tinybvh_clamp( bi.z, 0, BVHBINS - 1 );
+				binMin[0][bi.x] = tinybvh_min( binMin[0][bi.x], fragment[fi].bmin );
+				binMax[0][bi.x] = tinybvh_max( binMax[0][bi.x], fragment[fi].bmax ), count[0][bi.x]++;
+				binMin[1][bi.y] = tinybvh_min( binMin[1][bi.y], fragment[fi].bmin );
+				binMax[1][bi.y] = tinybvh_max( binMax[1][bi.y], fragment[fi].bmax ), count[1][bi.y]++;
+				binMin[2][bi.z] = tinybvh_min( binMin[2][bi.z], fragment[fi].bmin );
+				binMax[2][bi.z] = tinybvh_max( binMax[2][bi.z], fragment[fi].bmax ), count[2][bi.z]++;
+			}
+			// calculate per-split totals
+			float splitCost = 1e30f;
+			unsigned int bestAxis = 0, bestPos = 0;
+			for (int a = 0; a < 3; a++) if ((node.aabbMax[a] - node.aabbMin[a]) > minDim.cell[a])
+			{
+				bvhvec3 lBMin[BVHBINS - 1], rBMin[BVHBINS - 1], l1 = 1e30f, l2 = -1e30f;
+				bvhvec3 lBMax[BVHBINS - 1], rBMax[BVHBINS - 1], r1 = 1e30f, r2 = -1e30f;
+				float ANL[BVHBINS - 1], ANR[BVHBINS - 1];
+				for (unsigned int lN = 0, rN = 0, i = 0; i < BVHBINS - 1; i++)
+				{
+					lBMin[i] = l1 = tinybvh_min( l1, binMin[a][i] );
+					rBMin[BVHBINS - 2 - i] = r1 = tinybvh_min( r1, binMin[a][BVHBINS - 1 - i] );
+					lBMax[i] = l2 = tinybvh_max( l2, binMax[a][i] );
+					rBMax[BVHBINS - 2 - i] = r2 = tinybvh_max( r2, binMax[a][BVHBINS - 1 - i] );
+					lN += count[a][i], rN += count[a][BVHBINS - 1 - i];
+					ANL[i] = lN == 0 ? 1e30f : ((l2 - l1).halfArea() * (float)lN);
+					ANR[BVHBINS - 2 - i] = rN == 0 ? 1e30f : ((r2 - r1).halfArea() * (float)rN);
+				}
+				// evaluate bin totals to find best position for object split
+				for (unsigned int i = 0; i < BVHBINS - 1; i++)
+				{
+					const float C = ANL[i] + ANR[i];
+					if (C < splitCost)
+					{
+						splitCost = C, bestAxis = a, bestPos = i;
+						bestLMin = lBMin[i], bestRMin = rBMin[i], bestLMax = lBMax[i], bestRMax = rBMax[i];
+					}
+				}
+			}
+			// consider a spatial split
+			bool spatial = false;
+		#if 0
+			unsigned int NL[BVHBINS - 1], NR[BVHBINS - 1], budget = sliceEnd - sliceStart;
+			bvhvec3 spatialUnion = bestLMax - bestRMin;
+			float spatialOverlap = (spatialUnion.halfArea()) / rootArea;
+			if (budget > node.triCount && splitCost < 1e30f && spatialOverlap > 1e-5f)
+			{
+				for (unsigned int a = 0; a < 3; a++) if ((node.aabbMax[a] - node.aabbMin[a]) > minDim.cell[a])
+				{
+					// setup bins
+					bvhvec3 binMin[BVHBINS], binMax[BVHBINS];
+					for (unsigned int i = 0; i < BVHBINS; i++) binMin[i] = 1e30f, binMax[i] = -1e30f;
+					unsigned int countIn[BVHBINS] = { 0 }, countOut[BVHBINS] = { 0 };
+					// populate bins with clipped fragments
+					const float planeDist = (node.aabbMax[a] - node.aabbMin[a]) / (BVHBINS * 0.9999f);
+					const float rPlaneDist = 1.0f / planeDist, nodeMin = node.aabbMin[a];
+					for (unsigned int i = 0; i < node.triCount; i++)
+					{
+						const unsigned int fragIdx = triIdxA[node.leftFirst + i];
+						const int bin1 = tinybvh_clamp( (int)((fragment[fragIdx].bmin[a] * -1.0f - nodeMin) * rPlaneDist), 0, BVHBINS - 1 );
+						const int bin2 = tinybvh_clamp( (int)((fragment[fragIdx].bmax[a] - nodeMin) * rPlaneDist), 0, BVHBINS - 1 );
+						countIn[bin1]++, countOut[bin2]++;
+						if (bin2 == bin1)
+						{
+							// fragment fits in a single bin
+							binMin[bin1] = tinybvh_min( binMin[bin1], fragment[fragIdx].bmin * -1.0f );
+							binMax[bin1] = tinybvh_max( binMax[bin1], fragment[fragIdx].bmax );
+						}
+						else for (int j = bin1; j <= bin2; j++)
+						{
+							// clip fragment to each bin it overlaps
+							bvhvec3 bmin = node.aabbMin, bmax = node.aabbMax;
+							bmin[a] = nodeMin + planeDist * j;
+							bmax[a] = j == 6 ? node.aabbMax[a] : (bmin[a] + planeDist);
+							Fragment orig = fragment[fragIdx];
+							orig.bmin *= -1.0f;
+							Fragment tmpFrag;
+							if (!ClipFrag( orig, tmpFrag, bmin, bmax, minDim )) continue;
+							binMin[j] = tinybvh_min( binMin[j], tmpFrag.bmin );
+							binMax[j] = tinybvh_max( binMax[j], tmpFrag.bmax );
+						}
+					}
+					// evaluate split candidates
+					bvhvec3 lBMin[BVHBINS - 1], rBMin[BVHBINS - 1], l1 = 1e30f, l2 = -1e30f;
+					bvhvec3 lBMax[BVHBINS - 1], rBMax[BVHBINS - 1], r1 = 1e30f, r2 = -1e30f;
+					float ANL[BVHBINS], ANR[BVHBINS];
+					for (unsigned int lN = 0, rN = 0, i = 0; i < BVHBINS - 1; i++)
+					{
+						lBMin[i] = l1 = tinybvh_min( l1, binMin[i] ), rBMin[BVHBINS - 2 - i] = r1 = tinybvh_min( r1, binMin[BVHBINS - 1 - i] );
+						lBMax[i] = l2 = tinybvh_max( l2, binMax[i] ), rBMax[BVHBINS - 2 - i] = r2 = tinybvh_max( r2, binMax[BVHBINS - 1 - i] );
+						lN += countIn[i], rN += countOut[BVHBINS - 1 - i], NL[i] = lN, NR[BVHBINS - 2 - i] = rN;
+						ANL[i] = lN == 0 ? 1e30f : ((l2 - l1).halfArea() * (float)lN);
+						ANR[BVHBINS - 2 - i] = rN == 0 ? 1e30f : ((r2 - r1).halfArea() * (float)rN);
+					}
+					// find best position for spatial split
+					for (unsigned int i = 0; i < BVHBINS - 1; i++) if (ANL[i] + ANR[i] < splitCost && NL[i] + NR[i] < budget)
+					{
+						spatial = true, splitCost = ANL[i] + ANR[i], bestAxis = a, bestPos = i;
+						bestLMin = lBMin[i], bestLMax = lBMax[i], bestRMin = rBMin[i], bestRMax = rBMax[i];
+						bestLMax[a] = bestRMin[a]; // accurate
+					}
+				}
+			}
+		#endif
+			// terminate recursion
+			if (splitCost >= node.CalculateNodeCost()) break;
+			// double-buffered partition
+			unsigned int A = sliceStart, B = sliceEnd, src = node.leftFirst;
+			if (spatial)
+			{
+				const float planeDist = (node.aabbMax[bestAxis] - node.aabbMin[bestAxis]) / (BVHBINS * 0.9999f);
+				const float rPlaneDist = 1.0f / planeDist, nodeMin = node.aabbMin[bestAxis];
+				for (unsigned int i = 0; i < node.triCount; i++)
+				{
+					const unsigned int fragIdx = triIdxA[src++];
+					const unsigned int bin1 = (unsigned int)((fragment[fragIdx].bmin[bestAxis] * -1.0f - nodeMin) * rPlaneDist);
+					const unsigned int bin2 = (unsigned int)((fragment[fragIdx].bmax[bestAxis] - nodeMin) * rPlaneDist);
+					if (bin2 <= bestPos) triIdxB[A++] = fragIdx; else if (bin1 > bestPos) triIdxB[--B] = fragIdx; else
+					{
+						// split straddler
+						Fragment tmpFrag = fragment[fragIdx];
+						Fragment newFrag;
+						tmpFrag.bmin *= -1.0f;
+						if (ClipFrag( tmpFrag, newFrag, tinybvh_max( bestRMin, node.aabbMin ), tinybvh_min( bestRMax, node.aabbMax ), minDim ))
+						{
+							newFrag.bmin *= -1.0f;
+							fragment[nextFrag] = newFrag;
+							triIdxB[--B] = nextFrag++;
+						}
+						if (ClipFrag( tmpFrag, fragment[fragIdx], tinybvh_max( bestLMin, node.aabbMin ), tinybvh_min( bestLMax, node.aabbMax ), minDim ))
+						{
+							fragment[fragIdx].bmin *= -1.0f;
+							triIdxB[A++] = fragIdx;
+						}
+					}
+				}
+			}
+			else
+			{
+				// in-place partitioning
+				unsigned int j = node.leftFirst + node.triCount, src = node.leftFirst;
+				const float rpd = rpd3.cell[bestAxis], nmin = nmin3.cell[bestAxis];
+				for (unsigned int i = 0; i < node.triCount; i++)
+				{
+					const unsigned int fr = triIdx[src];
+					int bi = (int)(((fragment[fr].bmin[bestAxis] + fragment[fr].bmax[bestAxis]) * 0.5f - nmin) * rpd);
+					bi = tinybvh_clamp( bi, 0, BVHBINS - 1 );
+					if (bi <= (int)bestPos) triIdxB[A++] = fr; else triIdxB[--B] = fr;
+				}
+			}
+			// copy back slice data
+			memcpy( triIdxA + sliceStart, triIdxB + sliceStart, (sliceEnd - sliceStart) * 4 );
+			// create child nodes
+			unsigned int leftCount = A - sliceStart, rightCount = sliceEnd - B;
+			if (leftCount == 0 || rightCount == 0) break;
+			int leftChildIdx = newNodePtr++, rightChildIdx = newNodePtr++;
+			bvhNode[leftChildIdx].aabbMin = bestLMin, bvhNode[leftChildIdx].aabbMax = bestLMax;
+			bvhNode[leftChildIdx].leftFirst = sliceStart, bvhNode[leftChildIdx].triCount = leftCount;
+			bvhNode[rightChildIdx].aabbMin = bestRMin, bvhNode[rightChildIdx].aabbMax = bestRMax;
+			bvhNode[rightChildIdx].leftFirst = B, bvhNode[rightChildIdx].triCount = rightCount;
+			node.leftFirst = leftChildIdx, node.triCount = 0;
+			// recurse
+			task[taskCount].node = rightChildIdx;
+			task[taskCount].sliceEnd = sliceEnd;
+			task[taskCount++].sliceStart = sliceEnd = (A + B) >> 1;
+			nodeIdx = leftChildIdx;
+		}
+		// fetch subdivision task from stack
+		if (taskCount == 0) break; else
+		{
+			nodeIdx = task[--taskCount].node;
+			sliceStart = task[taskCount].sliceStart;
+			sliceEnd = task[taskCount].sliceEnd;
+		}
+	}
+	// clean up
+	for (unsigned int i = 0; i < triCount + slack; i++) triIdx[i] = fragment[triIdx[i]].primIdx;
+	// Compact();
+	refittable = false; // can't refit an SBVH
+	usedBVHNodes = newNodePtr;
+}
+
+bool BVH::ClipFrag( const Fragment& orig, Fragment& newFrag, bvhvec3 bmin, bvhvec3 bmax, bvhvec3 minDim )
+{
+	// find intersection of bmin/bmax and orig bmin/bmax
+	bmin = tinybvh_max( bmin, orig.bmin );
+	bmax = tinybvh_min( bmax, orig.bmax );
+	const bvhvec3 extent = bmax - bmin;
+	// Sutherland-Hodgeman against six bounding planes
+	unsigned int Nin = 3, vidx = orig.primIdx * 3;
+	bvhvec3 vin[10] = { verts[vidx], verts[vidx + 1], verts[vidx + 2] }, vout[10];
+	for (unsigned int a = 0; a < 3; a++)
+	{
+		const float eps = minDim.cell[a];
+		if (extent.cell[a] > eps)
+		{
+			unsigned int Nout = 0;
+			const float l = bmin[a], r = bmax[a];
+			for (unsigned int v = 0; v < Nin; v++)
+			{
+				bvhvec3 v0 = vin[v], v1 = vin[(v + 1) % Nin];
+				const bool v0in = v0[a] >= l - eps, v1in = v1[a] >= l - eps;
+				if (!(v0in || v1in)) continue; else if (v0in != v1in)
+				{
+					bvhvec3 C = v0 + (l - v0[a]) / (v1[a] - v0[a]) * (v1 - v0);
+					C[a] = l /* accurate */, vout[Nout++] = C;
+				}
+				if (v1in) vout[Nout++] = v1;
+			}
+			Nin = 0;
+			for (unsigned int v = 0; v < Nout; v++)
+			{
+				bvhvec3 v0 = vout[v], v1 = vout[(v + 1) % Nout];
+				const bool v0in = v0[a] <= r + eps, v1in = v1[a] <= r + eps;
+				if (!(v0in || v1in)) continue; else if (v0in != v1in)
+				{
+					bvhvec3 C = v0 + (r - v0[a]) / (v1[a] - v0[a]) * (v1 - v0);
+					C[a] = r /* accurate */, vin[Nin++] = C;
+				}
+				if (v1in) vin[Nin++] = v1;
+			}
+		}
+	}
+	bvhvec3 mn( 1e30f ), mx( -1e30f );
+	for (unsigned int i = 0; i < Nin; i++) mn = tinybvh_min( mn, vin[i] ), mx = tinybvh_max( mx, vin[i] );
+	newFrag.primIdx = orig.primIdx;
+	newFrag.bmin = tinybvh_max( mn, bmin ), newFrag.bmax = tinybvh_min( mx, bmax );
+	newFrag.clipped = 1;
+	return Nin > 0;
 }
 
 void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
