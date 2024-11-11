@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-// Nov 11, '24: version 0.5.0 : SBVH builder.
+// Nov 11, '24: version 0.5.1 : SBVH builder, BVH4_GPU traversal.
 // Nov 10, '24: version 0.4.2 : BVH4/8, gpu-friendly BVH4.
 // Nov 09, '24: version 0.4.0 : Layouts, BVH optimizer.
 // Nov 08, '24: version 0.3.0
@@ -77,7 +77,7 @@ THE SOFTWARE.
 // library version
 #define TINY_BVH_VERSION_MAJOR	0
 #define TINY_BVH_VERSION_MINOR	5
-#define TINY_BVH_VERSION_SUB	0
+#define TINY_BVH_VERSION_SUB	1
 
 // ============================================================================
 //
@@ -292,7 +292,16 @@ struct Ray
 class BVH
 {
 public:
-	enum BVHLayout { WALD_32BYTE = 1, AILA_LAINE, ALT_SOA, VERBOSE, BASIC_BVH4, BVH4_GPU, BASIC_BVH8 };
+	enum BVHLayout { 
+		WALD_32BYTE = 1,	// Default format, obtained using BVH::Build variants.
+		AILA_LAINE,			// For GPU rendering. Obtained by converting WALD_32BYTE.
+		ALT_SOA,			// For faster CPU rendering. Obtained by converting WALD_32BYTE.
+		VERBOSE,			// For BVH optimizing. Obtained by converting WALD_32BYTE.
+		BASIC_BVH4,			// Input for BVH4_GPU conversion. Obtained by converting WALD_32BYTE.
+		BVH4_GPU,			// For fast GPU rendering. Obtained by converting BASIC_BVH4.
+		BASIC_BVH8,			// Input for CWBVH. Obtained by converting WALD_32BYTE.
+		CWBVH				// Fastest GPU rendering. Obtained by converting BASIC_BVH8.
+	};
 	struct BVHNode
 	{
 		// 'Traditional' 32-byte BVH node layout, as proposed by Ingo Wald.
@@ -434,8 +443,9 @@ public:
 private:
 	int Intersect_Wald32Byte( Ray& ray ) const;
 	int Intersect_AilaLaine( Ray& ray ) const;
-	int Intersect_BasicBVH4( Ray& ray ) const;
-	int Intersect_BasicBVH8( Ray& ray ) const;
+	int Intersect_BasicBVH4( Ray& ray ) const; // only for testing, not efficient.
+	int Intersect_BasicBVH8( Ray& ray ) const; // only for testing, not efficient.
+	int Intersect_Alt4BVH( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_AltSoA( Ray& ray ) const; // requires BVH_USEAVX
 	void IntersectTri( Ray& ray, const unsigned int triIdx ) const;
 	static float IntersectAABB( const Ray& ray, const bvhvec3& aabbMin, const bvhvec3& aabbMax );
@@ -461,6 +471,8 @@ public:
 	BVHNode4* bvh4Node = 0;			// BVH node for 4-wide BVH.
 	bvhvec4* bvh4Alt = 0;			// 64-byte 4-wide BVH node for efficient GPU rendering.
 	BVHNode8* bvh8Node = 0;			// BVH node for 8-wide BVH.
+	bvhvec4* bvh8Compact = 0;		// Nodes in CWBVH format.
+	bvhvec4* bvh8Tris = 0;			// Triangle data for CWBVH nodes.
 	bool rebuildable = true;		// rebuilds are safe only if a tree has not been converted.
 	bool refittable = true;			// refits are safe only if the tree has no spatial splits.
 	// keep track of allocated buffer size to avoid 
@@ -472,6 +484,7 @@ public:
 	unsigned allocatedBVH4Nodes = 0;
 	unsigned allocatedAlt4Blocks = 0;
 	unsigned allocatedBVH8Nodes = 0;
+	unsigned allocatedCWBVHBlocks = 0;
 	unsigned usedBVHNodes = 0;
 	unsigned usedAltNodes = 0;
 	unsigned usedAlt2Nodes = 0;
@@ -479,6 +492,7 @@ public:
 	unsigned usedBVH4Nodes = 0;
 	unsigned usedAlt4Blocks = 0;
 	unsigned usedBVH8Nodes = 0;
+	unsigned usedCWBVHBlocks = 0;
 };
 
 } // namespace tinybvh
@@ -1449,6 +1463,9 @@ int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 	case BASIC_BVH4:
 		return Intersect_BasicBVH4( ray );
 		break;
+	case BVH4_GPU:
+		return Intersect_Alt4BVH( ray );
+		break;
 	case BASIC_BVH8:
 		return Intersect_BasicBVH8( ray );
 		break;
@@ -1535,7 +1552,7 @@ int BVH::Intersect_AilaLaine( Ray& ray ) const
 	return steps;
 }
 
-//  Intersect4. For testing the converted data only; not efficient.
+//  Intersect_BasicBVH4. For testing the converted data only; not efficient.
 int BVH::Intersect_BasicBVH4( Ray& ray ) const
 {
 	BVHNode4* node = &bvh4Node[0], * stack[64];
@@ -1556,7 +1573,7 @@ int BVH::Intersect_BasicBVH4( Ray& ray ) const
 	return steps;
 }
 
-//  Intersect4. For testing the converted data only; not efficient.
+// Intersect_BasicBVH8. For testing the converted data only; not efficient.
 int BVH::Intersect_BasicBVH8( Ray& ray ) const
 {
 	BVHNode8* node = &bvh8Node[0], * stack[128];
@@ -1573,6 +1590,121 @@ int BVH::Intersect_BasicBVH8( Ray& ray ) const
 			if (dist < 1e30f) stack[stackPtr++] = child;
 		}
 		if (stackPtr == 0) break; else node = stack[--stackPtr];
+	}
+	return steps;
+}
+
+// IntersectAlt4Nodes. For testing the converted data only; not efficient.
+// This code replicates how traversal on GPU happens.
+#define SWAP(A,B,C,D) t=A,A=B,B=t,t2=C,C=D,D=t2;
+struct uchar4 { unsigned char x, y, z, w; };
+static uchar4 as_uchar4( const float v ) { union { float t; uchar4 t4; }; t = v; return t4; }
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+#endif
+static unsigned as_uint( const float v ) { return *(unsigned int*)&v; }
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+int BVH::Intersect_Alt4BVH( Ray& ray ) const
+{
+	// traverse a blas
+	unsigned int offset = 0, stack[128], stackPtr = 0, t2 /* for SWAP macro */;
+	unsigned int steps = 0;
+	while (1)
+	{
+		steps++;
+		// fetch the node
+		const bvhvec4 data0 = bvh4Alt[offset + 0], data1 = bvh4Alt[offset + 1];
+		const bvhvec4 data2 = bvh4Alt[offset + 2], data3 = bvh4Alt[offset + 3];
+		// extract aabb
+		const bvhvec3 bmin = data0, extent = data1; // pre-scaled by 1/255
+		// reconstruct conservative child aabbs
+		const uchar4 d0 = as_uchar4( data0.w ), d1 = as_uchar4( data1.w ), d2 = as_uchar4( data2.x );
+		const uchar4 d3 = as_uchar4( data2.y ), d4 = as_uchar4( data2.z ), d5 = as_uchar4( data2.w );
+		const bvhvec3 c0min = bmin + extent * bvhvec3(d0.x, d2.x, d4.x), c0max = bmin + extent * bvhvec3(d1.x, d3.x, d5.x);
+		const bvhvec3 c1min = bmin + extent * bvhvec3(d0.y, d2.y, d4.y), c1max = bmin + extent * bvhvec3(d1.y, d3.y, d5.y);
+		const bvhvec3 c2min = bmin + extent * bvhvec3(d0.z, d2.z, d4.z), c2max = bmin + extent * bvhvec3(d1.z, d3.z, d5.z);
+		const bvhvec3 c3min = bmin + extent * bvhvec3(d0.w, d2.w, d4.w), c3max = bmin + extent * bvhvec3(d1.w, d3.w, d5.w);
+		// intersect child aabbs
+		const bvhvec3 t1a = (c0min - ray.O) * ray.rD, t2a = (c0max - ray.O) * ray.rD;
+		const bvhvec3 t1b = (c1min - ray.O) * ray.rD, t2b = (c1max - ray.O) * ray.rD;
+		const bvhvec3 t1c = (c2min - ray.O) * ray.rD, t2c = (c2max - ray.O) * ray.rD;
+		const bvhvec3 t1d = (c3min - ray.O) * ray.rD, t2d = (c3max - ray.O) * ray.rD;
+		const bvhvec3 minta = tinybvh_min( t1a, t2a ), maxta = tinybvh_max( t1a, t2a );
+		const bvhvec3 mintb = tinybvh_min( t1b, t2b ), maxtb = tinybvh_max( t1b, t2b );
+		const bvhvec3 mintc = tinybvh_min( t1c, t2c ), maxtc = tinybvh_max( t1c, t2c );
+		const bvhvec3 mintd = tinybvh_min( t1d, t2d ), maxtd = tinybvh_max( t1d, t2d );
+		const float tmina = tinybvh_max( tinybvh_max( tinybvh_max( minta.x, minta.y ), minta.z ), 0.0f );
+		const float tminb = tinybvh_max( tinybvh_max( tinybvh_max( mintb.x, mintb.y ), mintb.z ), 0.0f );
+		const float tminc = tinybvh_max( tinybvh_max( tinybvh_max( mintc.x, mintc.y ), mintc.z ), 0.0f );
+		const float tmind = tinybvh_max( tinybvh_max( tinybvh_max( mintd.x, mintd.y ), mintd.z ), 0.0f );
+		const float tmaxa = tinybvh_min( tinybvh_min( tinybvh_min( maxta.x, maxta.y ), maxta.z ), ray.hit.t );
+		const float tmaxb = tinybvh_min( tinybvh_min( tinybvh_min( maxtb.x, maxtb.y ), maxtb.z ), ray.hit.t );
+		const float tmaxc = tinybvh_min( tinybvh_min( tinybvh_min( maxtc.x, maxtc.y ), maxtc.z ), ray.hit.t );
+		const float tmaxd = tinybvh_min( tinybvh_min( tinybvh_min( maxtd.x, maxtd.y ), maxtd.z ), ray.hit.t );
+		float dist0 = tmina > tmaxa ? 1e30f : tmina, dist1 = tminb > tmaxb ? 1e30f : tminb;
+		float dist2 = tminc > tmaxc ? 1e30f : tminc, dist3 = tmind > tmaxd ? 1e30f : tmind, t;
+		// get child node info fields
+		unsigned int c0info = as_uint( data3.x ), c1info = as_uint( data3.y );
+		unsigned int c2info = as_uint( data3.z ), c3info = as_uint( data3.w );
+		if (dist0 < dist2) SWAP( dist0, dist2, c0info, c2info );
+		if (dist1 < dist3) SWAP( dist1, dist3, c1info, c3info );
+		if (dist0 < dist1) SWAP( dist0, dist1, c0info, c1info );
+		if (dist2 < dist3) SWAP( dist2, dist3, c2info, c3info );
+		if (dist1 < dist2) SWAP( dist1, dist2, c1info, c2info );
+		// process results, starting with farthest child, so nearest ends on top of stack
+		unsigned int nextNode = 0;
+		unsigned int leaf[4] = { 0, 0, 0, 0 }, leafs = 0;
+		if (dist0 < 1e30f)
+		{
+			if (c0info & 0x80000000) leaf[leafs++] = c0info; else if (c0info) stack[stackPtr++] = c0info;
+		}
+		if (dist1 < 1e30f)
+		{
+			if (c1info & 0x80000000) leaf[leafs++] = c1info; else if (c1info) stack[stackPtr++] = c1info;
+		}
+		if (dist2 < 1e30f)
+		{
+			if (c2info & 0x80000000) leaf[leafs++] = c2info; else if (c2info) stack[stackPtr++] = c2info;
+		}
+		if (dist3 < 1e30f)
+		{
+			if (c3info & 0x80000000) leaf[leafs++] = c3info; else if (c3info) stack[stackPtr++] = c3info;
+		}
+		// process encountered leafs, if any
+		for (unsigned int i = 0; i < leafs; i++)
+		{
+			const unsigned int N = (leaf[i] >> 16) & 0x7fff;
+			unsigned int triStart = offset + (leaf[i] & 0xffff);
+			for (unsigned int j = 0; j < N; j++, triStart += 3)
+			{
+				const bvhvec3 v0 = bvh4Alt[triStart + 0];
+				const bvhvec3 edge1 = bvhvec3( bvh4Alt[triStart + 1] ) - v0;
+				const bvhvec3 edge2 = bvhvec3( bvh4Alt[triStart + 2] ) - v0;
+				const bvhvec3 h = cross( ray.D, edge2 );
+				const float a = dot( edge1, h );
+				if (fabs( a ) < 0.0000001f) continue;
+				const float f = 1 / a;
+				const bvhvec3 s = ray.O - v0;
+				const float u = f * dot( s, h );
+				if (u < 0 || u > 1) continue;
+				const bvhvec3 q = cross( s, edge1 );
+				const float v = f * dot( ray.D, q );
+				if (v < 0 || u + v > 1) continue;
+				const float d = f * dot( edge2, q );
+				if (d <= 0.0f || d >= ray.hit.t /* i.e., t */) continue;
+				ray.hit.t = d, ray.hit.u = u, ray.hit.v = v;
+				ray.hit.prim = as_uint( bvh4Alt[triStart + 0].w );
+			}
+		}
+		// continue with nearest node or first node on the stack
+		if (nextNode) offset = nextNode; else
+		{
+			if (!stackPtr) break;
+			offset = stack[--stackPtr];
+		}
 	}
 	return steps;
 }
