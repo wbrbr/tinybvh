@@ -93,6 +93,24 @@ THE SOFTWARE.
 #define ALIGNED( x ) __declspec( align( x ) )
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( x ), 64 ) )
 #define ALIGNED_FREE( x ) _aligned_free( x )
+#elif defined(__EMSCRIPTEN__)
+// EMSCRIPTEN (needs to be before gcc and clang to avoid misdetection) 
+#include <cstdlib>
+#include <cmath>
+#include <cstring>
+#define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
+#if defined(__x86_64__) || defined(_M_X64)
+// https://stackoverflow.com/questions/32612881/why-use-mm-malloc-as-opposed-to-aligned-malloc-alligned-alloc-or-posix-mem
+#include <xmmintrin.h>
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
+#define ALIGNED_FREE( x ) _mm_free( x )
+#else
+// Size needs to be a multiple of Alignment in the standard (in EMSCRIPTEN this is enforced)
+// See https://en.cppreference.com/w/c/memory/aligned_alloc
+#define MAKE_MULIPLE_64( x ) ( ( x + 63 ) & ( ~0x3f ) )
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, MAKE_MULIPLE_64( x ) ) )
+#define ALIGNED_FREE( x ) free( x )
+#endif
 #else
 // gcc / clang
 #include <cstdlib>
