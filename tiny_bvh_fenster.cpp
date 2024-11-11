@@ -87,7 +87,7 @@ void Init()
 #if defined(BVH_USEAVX)
 	bvh.BuildAVX( triangles, verts / 3 );
 #else
-	bvh.Build( triangles, verts / 3 );
+	// bvh.Build( triangles, verts / 3 );
 #endif
 
 #endif
