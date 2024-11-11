@@ -35,7 +35,7 @@ The **performance measurement tool** use OpenMP and can be compiled with:
 This version of the library includes the following functionality:
 * Binned SAH BVH builder
 * Fast binned SAH BVH builder using AVX intrinsics
-* Spatial Splits (SBVH)
+* Spatial Splits (SBVH) builder
 * BVH optimizer: reduces SAH cost and improves ray tracing performance
 * Collapse to 4-wide and 8-wide BVH
 * Conversion of 4-wide BVH to GPU-friendly 64-byte quantized format
