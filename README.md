@@ -51,6 +51,9 @@ Plans:
   * Better BVH::Optimize interface
   * Faster Optimize algorithm (complete paper implementation)
   * Understanding optimized SBVH performance
+* CPU single-ray performance
+  * Experiment with 4-wide layouts
+  * Reverse-engineer Embree & PhysX
 * OpenCL traversal example
   * AILA_LAINE traversal
   * BVH4_GPU traversal
