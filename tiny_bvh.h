@@ -73,6 +73,7 @@ THE SOFTWARE.
 // include fast AVX BVH builder
 #if defined(__x86_64__) || defined(_M_X64)
 #define BVH_USEAVX
+// #define BVH_USE_LZCNT // for CWBVH traversal test code only
 #endif
 
 // library version
@@ -2565,6 +2566,8 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 
 #ifdef _MSC_VER
 
+#ifdef BVH_USE_LZCNT
+
 // Intersect_CWBVH:
 // Intersect a compressed 8-wide BVH with a ray. For debugging only, not efficient.
 // Not technically limited to BVH_USEAVX, but __lzcnt and __popcnt will require
@@ -2731,6 +2734,8 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 	} while (true);
 	return 0;
 }
+
+#endif // BVH_USE_LZCNT
 
 #else
 
