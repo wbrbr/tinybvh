@@ -73,7 +73,6 @@ THE SOFTWARE.
 // include fast AVX BVH builder
 #if defined(__x86_64__) || defined(_M_X64)
 #define BVH_USEAVX
-// #define BVH_USE_LZCNT // for CWBVH traversal test code only
 #endif
 
 // library version
@@ -1621,8 +1620,6 @@ int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 	case ALT_SOA:
 		return Intersect_AltSoA( ray );
 		break;
-	#endif
-	#ifdef BVH_USE_LZCNT
 	case CWBVH:
 		return Intersect_CWBVH( ray );
 		break;
@@ -2566,15 +2563,29 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 	return steps;
 }
 
-#ifdef _MSC_VER
-
-#ifdef BVH_USE_LZCNT
-
 // Intersect_CWBVH:
 // Intersect a compressed 8-wide BVH with a ray. For debugging only, not efficient.
 // Not technically limited to BVH_USEAVX, but __lzcnt and __popcnt will require
 // exotic compiler flags (in combination with __builtin_ia32_lzcnt_u32), so... Since
 // this is just here to test data before it goes to the GPU: MSVC-only for now.
+static unsigned __bfind( unsigned x ) // https://github.com/mackron/refcode/blob/master/lzcnt.c
+{
+#if defined(_MSC_VER) && !defined(__clang__)
+	return 31 - __lzcnt( x );
+#elif defined(__GNUC__) || defined(__clang__)
+	unsigned int r;
+	__asm__ __volatile__( "lzcnt{l %1, %0| %0, %1}" : "=r"(r) : "r"(x) : "cc" );
+	return 31 - r;
+#endif
+}
+static unsigned __popc( unsigned x )
+{
+#if defined(_MSC_VER) && !defined(__clang__)
+	return __popcnt( x );
+#elif defined(__GNUC__) || defined(__clang__)
+	return __builtin_popcount( x );
+#endif
+}
 #define STACK_POP() { ngroup = traversalStack[--stackPtr]; }
 #define STACK_PUSH() { traversalStack[stackPtr++] = ngroup; }
 static inline unsigned int extract_byte( const unsigned int i, const unsigned int n ) { return (i >> (n * 8)) & 0xFF; }
@@ -2588,8 +2599,6 @@ static inline unsigned int sign_extend_s8x4( const unsigned int i )
 	unsigned int b3 = (i & 0b00000000000000000000000010000000) ? 0x000000ff : 0;
 	return b0 + b1 + b2 + b3; // probably can do better than this.
 }
-static inline unsigned int __bfind( const unsigned int v ) { return 31 - __lzcnt( v ); }
-inline unsigned int __popc( const unsigned int v ) { return __popcnt( v ); }
 int BVH::Intersect_CWBVH( Ray& ray ) const
 {
 	bvhuint2 traversalStack[128];
@@ -2620,6 +2629,10 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 				const bvhvec4 n4 = blasNodes[child_node_index * 5 + 4];
 				const bvhvec3 p = n0;
 				bvhint3 e;
+			#ifdef __GNUC__
+			#pragma GCC diagnostic push
+			#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+			#endif
 				e.x = (int)*((char*)&n0.w + 0), e.y = (int)*((char*)&n0.w + 1), e.z = (int)*((char*)&n0.w + 2);
 				ngroup.x = as_uint( n1.x ), tgroup.x = as_uint( n1.y ), tgroup.y = 0;
 				unsigned int hitmask = 0;
@@ -2687,6 +2700,9 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 					}
 				}
 				ngroup.y = (hitmask & 0xFF000000) | (as_uint( n0.w ) >> 24), tgroup.y = hitmask & 0x00FFFFFF;
+			#ifdef __GNUC__
+			#pragma GCC diagnostic pop
+			#endif
 			}
 		}
 		else tgroup = ngroup, ngroup = bvhuint2( 0 );
@@ -2736,18 +2752,6 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 	} while (true);
 	return 0;
 }
-
-#endif // BVH_USE_LZCNT
-
-#else
-
-int BVH::Intersect_CWBVH( Ray& ray ) const
-{
-	assert( false ); // only available for MSVC for the moment.
-	return 0;
-}
-
-#endif // _MSC_VER
 
 #endif // BVH_USEAVX
 
