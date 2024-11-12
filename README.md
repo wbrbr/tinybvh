@@ -56,6 +56,10 @@ Plans:
   * BVH4_GPU traversal
   * Efficient CWBVH GPU traversal
 * TLAS/BLAS traversal with BLAS transforms
+* Example renderers:
+  * CPU WHitted-style ray tracer
+  * GPU path tracer
+  * GPU wavefront path tracer
   
 These features have already been completed but need polishing and adapting to the interface, once it is settled. CWBVH GPU traversal combined with an optimized SBVH provides state-of-the-art **#RTXOff** performance; expect _billions of rays per second_.
 
