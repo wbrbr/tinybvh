@@ -13,6 +13,8 @@ elseif (UNIX AND NOT EMSCRIPTEN)
 elseif (EMSCRIPTEN)
 	# To auto generate test pages
 	set(CMAKE_EXECUTABLE_SUFFIX ".html")
+
+	option(ENABLE_ASAN "Enable ASAN on the build (it'll slow down the app)" OFF)
 endif()
 
 enable_testing()
@@ -31,6 +33,10 @@ if (NOT MSVC)
 		-g
 	)
 
+	set(common_link_flags
+		-g
+	)
+
 	if (NOT EMSCRIPTEN)
 		# EMSCRIPTEN doesn't know about archs
 		set(common_cxx_flags
@@ -38,28 +44,37 @@ if (NOT MSVC)
 		)
 	else()
 		# EMSCRIPTEN flags:
-		#	- -sALLOW_MEMORY_GROWTH (allow runtime allocations) (note linker will warn as CMAKE passes CMAKE_CXX_FLAGS to it as well)
-		set(CMAKE_CXX_FLAGS 
-			${CMAKE_CXX_FLAGS} -sALLOW_MEMORY_GROWTH=1
-		)
+		# -sALLOW_MEMORY_GROWTH (allow runtime allocations) (for some reason cmake passes this as a linker flag when in theory it's a compiler one)
+		set(common_link_flags ${common_link_flags} -sALLOW_MEMORY_GROWTH=1)
+
+		# -fsanitize=address (enable ASAN)
+		# More at https://emscripten.org/docs/debugging/Sanitizers.html#address-sanitizer 
+		if (ENABLE_ASAN) 
+			set(common_cxx_flags ${common_cxx_flags} -fsanitize=address)
+			set(common_link_flags ${common_link_flags} -fsanitize=address)
+		endif()
 	endif()
 
 	target_compile_options(tiny_bvh_test PRIVATE ${common_cxx_flags})
+	target_link_options(tiny_bvh_test PRIVATE ${common_link_flags})
+
 	target_compile_options(tiny_bvh_renderer PRIVATE ${common_cxx_flags})
+	target_link_options(tiny_bvh_renderer PRIVATE ${common_link_flags})
 
 	if (NOT APPLE AND NOT EMSCRIPTEN)
 		target_compile_options(tiny_bvh_speedtest PRIVATE ${common_cxx_flags} -fopenmp)
-		target_link_options(tiny_bvh_speedtest PRIVATE -fopenmp)
+		target_link_options(tiny_bvh_speedtest PRIVATE ${common_link_flags} -fopenmp)
 	else()
 		# No openmp support in default compiler
 		target_compile_options(tiny_bvh_speedtest PRIVATE ${common_cxx_flags})
-		target_link_options(tiny_bvh_speedtest PRIVATE)
+		target_link_options(tiny_bvh_speedtest PRIVATE ${common_link_flags})
 	endif()
 
 	if (TARGET tiny_bvh_fenster)
 		# Not all platforms support all targets. E. g.:
 		#	- EMSCRIPTEN doesn't render anything by default (you would need WebGL/WebGPU)
 		target_compile_options(tiny_bvh_fenster PRIVATE ${common_cxx_flags})
+		target_link_options(tiny_bvh_fenster PRIVATE ${common_link_flags})
 		if (WIN32)
 			target_link_libraries(tiny_bvh_fenster -mwindows)
 		elseif (APPLE)
