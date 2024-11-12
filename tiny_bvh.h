@@ -1607,9 +1607,6 @@ int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 	case AILA_LAINE:
 		return Intersect_AilaLaine( ray );
 		break;
-	case ALT_SOA:
-		return Intersect_AltSoA( ray );
-		break;
 	case BASIC_BVH4:
 		return Intersect_BasicBVH4( ray );
 		break;
@@ -1620,6 +1617,9 @@ int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 		return Intersect_BasicBVH8( ray );
 		break;
 	#ifdef BVH_USEAVX
+	case ALT_SOA:
+		return Intersect_AltSoA( ray );
+		break;
 	case CWBVH:
 		return Intersect_CWBVH( ray );
 		break;
