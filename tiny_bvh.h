@@ -2596,6 +2596,8 @@ static unsigned __bfind( unsigned x ) // https://github.com/mackron/refcode/blob
 {
 #if defined(_MSC_VER) && !defined(__clang__)
 	return 31 - __lzcnt( x );
+#elif defined(__EMSCRIPTEN__)
+	return 31 - __builtin_clz(x);
 #elif defined(__GNUC__) || defined(__clang__)
 	unsigned r;
 	__asm__ __volatile__( "lzcnt{l %1, %0| %0, %1}" : "=r"(r) : "r"(x) : "cc" );
