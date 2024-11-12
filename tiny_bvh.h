@@ -109,7 +109,7 @@ THE SOFTWARE.
 #else
 // Size needs to be a multiple of Alignment in the standard (in EMSCRIPTEN this is enforced)
 // See https://en.cppreference.com/w/c/memory/aligned_alloc
-#define MAKE_MULIPLE_64( x ) ( ( x + 63 ) & ( ~0x3f ) )
+#define MAKE_MULIPLE_64( x ) ( ( ( x ) + 63 ) & ( ~0x3f ) )
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, MAKE_MULIPLE_64( x ) ) )
 #define ALIGNED_FREE( x ) free( x )
 #endif
