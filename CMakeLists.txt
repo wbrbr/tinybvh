@@ -57,10 +57,13 @@ if (NOT MSVC)
 			set(common_link_flags ${common_link_flags} -fsanitize=address)
 		endif()
 
+		# Enable SIMD instructions and AVX intrinsics
 		string(TOLOWER "${emcc_simd}" emcc_simd_lower)
 		if (emcc_simd_lower STREQUAL fixed)
+			# Supported by all browsers https://webassembly.org/features/
 			set(common_cxx_flags ${common_cxx_flags} -msimd128 -mavx)
 		elseif (emcc_simd_lower STREQUAL relaxed)
+			# Supported some browsers https://webassembly.org/features/
 			set(common_cxx_flags ${common_cxx_flags} -mrelaxed-simd -mavx)
 		endif()
 
