@@ -31,10 +31,12 @@ The **performance measurement tool** use OpenMP and can be compiled with:
 
 ````g++ -std=c++20 -mavx -Ofast -fopenmp tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
-# Version 0.4.2
+# Version 0.7.2
 This version of the library includes the following functionality:
 * Binned SAH BVH builder
 * Fast binned SAH BVH builder using AVX intrinsics
+* Spatial Splits (SBVH) builder
+* 'Compressed Wide BVH' (CWBVH) data structure
 * BVH optimizer: reduces SAH cost and improves ray tracing performance
 * Collapse to 4-wide and 8-wide BVH
 * Conversion of 4-wide BVH to GPU-friendly 64-byte quantized format
@@ -44,11 +46,23 @@ The current version of the library is rapidly gaining functionality. Please expe
 
 Plans:
 
-* Spatial Splits (SBVH)
+* BVH::Optimize:
+  * Single-prim-leaf BVHs in 'verbose' layout
+  * Better BVH::Optimize interface
+  * Faster Optimize algorithm (complete paper implementation)
+  * Understanding optimized SBVH performance
+* CPU single-ray performance
+  * Experiment with 4-wide layouts
+  * Reverse-engineer Embree & PhysX
 * OpenCL traversal example
-* 'Compressed Wide BVH' data structure (CWBVH)
-* Efficient CWBVH GPU traversal
+  * AILA_LAINE traversal
+  * BVH4_GPU traversal
+  * Efficient CWBVH GPU traversal
 * TLAS/BLAS traversal with BLAS transforms
+* Example renderers:
+  * CPU WHitted-style ray tracer
+  * GPU path tracer
+  * GPU wavefront path tracer
   
 These features have already been completed but need polishing and adapting to the interface, once it is settled. CWBVH GPU traversal combined with an optimized SBVH provides state-of-the-art **#RTXOff** performance; expect _billions of rays per second_.
 

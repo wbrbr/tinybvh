@@ -129,7 +129,7 @@ int main()
 	// EMSCRIPTEN needs to be before clang or gcc
 	printf("(emcc %i.%i build)\n", __EMSCRIPTEN_major__, __EMSCRIPTEN_minor__);
 #elif defined __clang__
-	printf( "(clang %i.%i build)\n", __clang_major__ , __clang_minor__ );
+	printf( "(clang %i.%i build)\n", __clang_major__, __clang_minor__ );
 #elif defined __GNUC__
 	printf( "(gcc %i.%i build)\n", __GNUC__, __GNUC_MINOR__ );
 #else
@@ -139,8 +139,8 @@ int main()
 	// determine what CPU is running the tests.
 #ifdef _WIN32
 	char model[256]{};
-	for(unsigned i = 0; i < 3; ++i) __cpuidex( (int*)(model + i * 16), i + 0x80000002 , 0 );
-	printf( "running on %s\n", model ); 
+	for (unsigned i = 0; i < 3; ++i) __cpuidex( (int*)(model + i * 16), i + 0x80000002, 0 );
+	printf( "running on %s\n", model );
 #endif
 	printf( "----------------------------------------------------------------\n" );
 
@@ -157,8 +157,7 @@ int main()
 	// measure single-core bvh construction time - reference builder
 	printf( "- reference builder: " );
 	t.reset();
-	for (int pass = 0; pass < 3; pass++)
-		bvh.Build( (bvhvec4*)triangles, verts / 3 );
+	for (int pass = 0; pass < 3; pass++) bvh.Build( triangles, verts / 3 );
 	float buildTime = t.elapsed() / 3.0f;
 	printf( "%7.2fms for %7i triangles ", buildTime * 1000.0f, verts / 3 );
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
@@ -170,9 +169,21 @@ int main()
 	// measure single-core bvh construction time - AVX builder
 	printf( "- fast AVX builder:  " );
 	t.reset();
-	for (int pass = 0; pass < 3; pass++) bvh.BuildAVX( (bvhvec4*)triangles, verts / 3 );
+	for (int pass = 0; pass < 3; pass++) bvh.BuildAVX( triangles, verts / 3 );
 	float buildTimeAVX = t.elapsed() / 3.0f;
 	printf( "%7.2fms for %7i triangles ", buildTimeAVX * 1000.0f, verts / 3 );
+	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
+#endif
+#endif
+
+#ifdef BUILD_AVX
+#ifdef BVH_USEAVX
+	// measure single-core bvh construction time - AVX builder
+	printf( "- HQ (SBVH) builder: " );
+	t.reset();
+	for (int pass = 0; pass < 3; pass++) bvh.BuildHQ( triangles, verts / 3 );
+	float buildTimeHQ = t.elapsed() / 3.0f;
+	printf( "%7.2fms for %7i triangles ", buildTimeHQ * 1000.0f, verts / 3 );
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 #endif
 #endif
@@ -322,10 +333,8 @@ int main()
 	// trace all rays three times to estimate average performance
 	// - single core version, alternative bvh layout
 	printf( "Optimizing BVH... " );
-	bvh.Convert( BVH::WALD_32BYTE, BVH::VERBOSE );
 	t.reset();
-	for (int i = 0; i < 1000000; i++) bvh.Optimize();
-	bvh.Convert( BVH::VERBOSE, BVH::WALD_32BYTE );
+	bvh.Optimize( 1000000 );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 	printf( "done (%.2fs). New SAH=%.2f\n", t.elapsed(), bvh.SAHCost() );
 	for (int i = 0; i < N; i += 2) bvh.Intersect( rays[i], BVH::ALT_SOA ); // re-warm

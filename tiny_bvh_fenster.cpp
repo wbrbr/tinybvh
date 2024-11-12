@@ -86,8 +86,10 @@ void Init()
 	// build a BVH over the scene
 #if defined(BVH_USEAVX)
 	bvh.BuildAVX( triangles, verts / 3 );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH8 );
+	bvh.Convert( BVH::BASIC_BVH8, BVH::CWBVH );
 #else
-	bvh.Build( triangles, verts / 3 );
+	// bvh.Build( triangles, verts / 3 );
 #endif
 
 #endif
@@ -141,7 +143,7 @@ void Tick( uint32_t* buf )
 		rays[i].hit.prim = rayhit.hit.primID, rays[i].hit.t = rayhit.ray.tfar;
 	}
 #else
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::CWBVH );
 #endif
 
 	// visualize result

@@ -55,9 +55,9 @@ int main()
 	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
 	char line[122];
 	float sum;
-	for( int s, x, y = 0; y < 200; y += 4 ) 
+	for (int s, x, y = 0; y < 200; y += 4)
 	{
-		for( x = 0; x < 480; x += 4 )
+		for (x = 0; x < 480; x += 4)
 		{
 			for (sum = 0, s = 0; s < 16; s++) // 16 samples per 'pixel'
 			{
