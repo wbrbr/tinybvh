@@ -14,7 +14,8 @@ elseif (EMSCRIPTEN)
 	# To auto generate test pages
 	set(CMAKE_EXECUTABLE_SUFFIX ".html")
 
-	option(ENABLE_ASAN "Enable ASAN on the build (it'll slow down the app)" OFF)
+	option(enable_asan "Enable ASAN on the build (it'll slow down the app)" OFF)
+	set()
 endif()
 
 enable_testing()
@@ -49,7 +50,7 @@ if (NOT MSVC)
 
 		# -fsanitize=address (enable ASAN)
 		# More at https://emscripten.org/docs/debugging/Sanitizers.html#address-sanitizer 
-		if (ENABLE_ASAN) 
+		if (enable_asan) 
 			set(common_cxx_flags ${common_cxx_flags} -fsanitize=address)
 			set(common_link_flags ${common_link_flags} -fsanitize=address)
 		endif()
