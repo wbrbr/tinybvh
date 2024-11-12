@@ -327,10 +327,8 @@ int main()
 	// trace all rays three times to estimate average performance
 	// - single core version, alternative bvh layout
 	printf( "Optimizing BVH... " );
-	bvh.Convert( BVH::WALD_32BYTE, BVH::VERBOSE );
 	t.reset();
-	for (int i = 0; i < 1000000; i++) bvh.Optimize();
-	bvh.Convert( BVH::VERBOSE, BVH::WALD_32BYTE );
+	bvh.Optimize( 1000000 );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 	printf( "done (%.2fs). New SAH=%.2f\n", t.elapsed(), bvh.SAHCost() );
 	for (int i = 0; i < N; i += 2) bvh.Intersect( rays[i], BVH::ALT_SOA ); // re-warm
