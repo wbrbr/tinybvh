@@ -14,10 +14,15 @@ elseif (EMSCRIPTEN)
 	# To auto generate test pages
 	set(CMAKE_EXECUTABLE_SUFFIX ".html")
 
+	# Enable clang's Address Sanitizer for WASM
 	option(enable_asan "Enable ASAN on the build (it'll slow down the app)" OFF)
 
+	# Enable wasm SIMD instructions
 	set(emcc_simd "fixed" CACHE STRING "SIMD type to use in the build (none, fixed, relaxed)")
 	set_property(CACHE emcc_simd PROPERTY STRINGS none fixed relaxed)
+
+	# Enable thread support for WASM (note that you need special http headers now https://emscripten.org/docs/porting/pthreads.html )
+	option(emcc_threads "Enable Threads in WASM (note that means you need to change your http headers)" OFF)
 endif()
 
 enable_testing()
@@ -75,14 +80,34 @@ if (NOT MSVC)
 	target_compile_options(tiny_bvh_renderer PRIVATE ${common_cxx_flags})
 	target_link_options(tiny_bvh_renderer PRIVATE ${common_link_flags})
 
+	# No openmp support in default compiler
+	set(tiny_bvh_speedtest_cxx_flags ${common_cxx_flags})
+	set(tiny_bvh_speedtest_link_flags ${common_link_flags})
+
 	if (NOT APPLE AND NOT EMSCRIPTEN)
-		target_compile_options(tiny_bvh_speedtest PRIVATE ${common_cxx_flags} -fopenmp)
-		target_link_options(tiny_bvh_speedtest PRIVATE ${common_link_flags} -fopenmp)
-	else()
-		# No openmp support in default compiler
-		target_compile_options(tiny_bvh_speedtest PRIVATE ${common_cxx_flags})
-		target_link_options(tiny_bvh_speedtest PRIVATE ${common_link_flags})
+		set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags} -fopenmp)
+		set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -fopenmp)
+	elseif (EMSCRIPTEN)
+		if (emcc_threads)
+			set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags} -pthread)
+			set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -pthread)
+
+			if (FALSE)
+				# From:
+				#	- https://github.com/llvm/llvm-project/pull/95169 
+				#	- https://github.com/llvm/llvm-project/pull/71297 
+				#	- https://reviews.llvm.org/D142593?id=492403
+				# llvm's and clang's OpenMP has been ported to WASM around August 2024
+				# Sadly emcc's clang doesn't include a copy of the lib
+				# So you would need to do compile it yourself https://github.com/abrown/wasm-openmp-examples/blob/main/emscripten.sh
+				# Then link it here
+				set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags} -fopenmp)
+				set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -fopenmp)
+			endif()
+		endif()
 	endif()
+	target_compile_options(tiny_bvh_speedtest PRIVATE ${tiny_bvh_speedtest_cxx_flags})
+	target_link_options(tiny_bvh_speedtest PRIVATE ${tiny_bvh_speedtest_link_flags})
 
 	if (TARGET tiny_bvh_fenster)
 		# Not all platforms support all targets. E. g.:
