@@ -22,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+// Nov 12, '24: version 0.7.0 : CWBVH construction and traversal.
 // Nov 11, '24: version 0.5.1 : SBVH builder, BVH4_GPU traversal.
 // Nov 10, '24: version 0.4.2 : BVH4/8, gpu-friendly BVH4.
 // Nov 09, '24: version 0.4.0 : Layouts, BVH optimizer.
@@ -76,8 +77,8 @@ THE SOFTWARE.
 
 // library version
 #define TINY_BVH_VERSION_MAJOR	0
-#define TINY_BVH_VERSION_MINOR	5
-#define TINY_BVH_VERSION_SUB	1
+#define TINY_BVH_VERSION_MINOR	7
+#define TINY_BVH_VERSION_SUB	0
 
 // ============================================================================
 //
@@ -167,6 +168,20 @@ struct bvhint3
 	int& operator [] ( const int i ) { return cell[i]; }
 	union { struct { int x, y, z; }; int cell[3]; };
 };
+struct bvhint2
+{
+	bvhint2() = default;
+	bvhint2( const int a, const int b ) : x( a ), y( b ) {}
+	bvhint2( const int a ) : x( a ), y( a ) {}
+	int x, y;
+};
+struct bvhuint2
+{
+	bvhuint2() = default;
+	bvhuint2( const unsigned int a, const unsigned int b ) : x( a ), y( b ) {}
+	bvhuint2( const unsigned int a ) : x( a ), y( a ) {}
+	unsigned int x, y;
+};
 
 #ifdef TINYBVH_IMPLEMENTATION
 bvhvec4::bvhvec4( const bvhvec3& a ) { x = a.x; y = a.y; z = a.z; w = 0; }
@@ -187,6 +202,8 @@ static inline float tinybvh_min( const float a, const float b ) { return a < b ?
 static inline float tinybvh_max( const float a, const float b ) { return a > b ? a : b; }
 static inline int tinybvh_min( const int a, const int b ) { return a < b ? a : b; }
 static inline int tinybvh_max( const int a, const int b ) { return a > b ? a : b; }
+static inline unsigned int tinybvh_min( const unsigned int a, const unsigned int b ) { return a < b ? a : b; }
+static inline unsigned int tinybvh_max( const unsigned int a, const unsigned int b ) { return a > b ? a : b; }
 static inline bvhvec2 tinybvh_min( const bvhvec2& a, const bvhvec2& b ) { return bvhvec2( tinybvh_min( a.x, b.x ), tinybvh_min( a.y, b.y ) ); }
 static inline bvhvec3 tinybvh_min( const bvhvec3& a, const bvhvec3& b ) { return bvhvec3( tinybvh_min( a.x, b.x ), tinybvh_min( a.y, b.y ), tinybvh_min( a.z, b.z ) ); }
 static inline bvhvec4 tinybvh_min( const bvhvec4& a, const bvhvec4& b ) { return bvhvec4( tinybvh_min( a.x, b.x ), tinybvh_min( a.y, b.y ), tinybvh_min( a.z, b.z ), tinybvh_min( a.w, b.w ) ); }
@@ -292,7 +309,7 @@ struct Ray
 class BVH
 {
 public:
-	enum BVHLayout { 
+	enum BVHLayout {
 		WALD_32BYTE = 1,	// Default format, obtained using BVH::Build variants.
 		AILA_LAINE,			// For GPU rendering. Obtained by converting WALD_32BYTE.
 		ALT_SOA,			// For faster CPU rendering. Obtained by converting WALD_32BYTE.
@@ -446,6 +463,7 @@ private:
 	int Intersect_BasicBVH4( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_BasicBVH8( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_Alt4BVH( Ray& ray ) const; // only for testing, not efficient.
+	int Intersect_CWBVH( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_AltSoA( Ray& ray ) const; // requires BVH_USEAVX
 	void IntersectTri( Ray& ray, const unsigned int triIdx ) const;
 	static float IntersectAABB( const Ray& ray, const bvhvec3& aabbMin, const bvhvec3& aabbMax );
@@ -1226,7 +1244,7 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 			bvh8Node = (BVHNode8*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode8 ) );
 			allocatedBVH8Nodes = spaceNeeded;
 		}
-		memset( bvh8Node, 0, sizeof( BVHNode4 ) * spaceNeeded );
+		memset( bvh8Node, 0, sizeof( BVHNode8 ) * spaceNeeded );
 		// create an mbvh node for each bvh2 node
 		for (unsigned int i = 0; i < usedBVHNodes; i++) if (i != 1)
 		{
@@ -1272,6 +1290,138 @@ void BVH::Convert( BVHLayout from, BVHLayout to, bool deleteOriginal )
 			nodeIdx = stack[--stackPtr];
 		}
 		usedBVH8Nodes = usedBVHNodes; // there will be gaps / unused nodes though.
+	}
+	else if (from == BASIC_BVH8 && to == CWBVH)
+	{
+		// Convert a BVH8 to the format specified in: "Efficient Incoherent Ray
+		// Traversal on GPUs Through Compressed Wide BVHs", Ylitie et al. 2017.
+		// Adapted from code by "AlanWBFT".
+		assert( bvh8Node != 0 );
+		assert( !bvh8Node[0].isLeaf() ); // TODO: handle degenerate BVH
+		// allocate memory
+		unsigned int spaceNeeded = usedBVH8Nodes * 5; // CWBVH nodes use 80 bytes each.
+		if (spaceNeeded > allocatedCWBVHBlocks)
+		{
+			bvh8Compact = (bvhvec4*)ALIGNED_MALLOC( spaceNeeded * 16 );
+			bvh8Tris = (bvhvec4*)ALIGNED_MALLOC( idxCount * 3 * 16 );
+			allocatedCWBVHBlocks = spaceNeeded;
+		}
+		memset( bvh8Compact, 0, spaceNeeded * 16 );
+		memset( bvh8Tris, 0, idxCount * 3 * 16 );
+		BVHNode8* stackNodePtr[256];
+		unsigned int stackNodeAddr[256], stackPtr = 1, nodeDataPtr = 5, triDataPtr = 0;
+		stackNodePtr[0] = &bvh8Node[0], stackNodeAddr[0] = 0;
+		// start conversion
+		while (stackPtr > 0)
+		{
+			BVHNode8* node = stackNodePtr[--stackPtr];
+			const int currentNodeAddr = stackNodeAddr[stackPtr];
+			bvhvec3 nodeLo = node->aabbMin, nodeHi = node->aabbMax;
+			// greedy child node ordering
+			const bvhvec3 nodeCentroid = (nodeLo + nodeHi) * 0.5f;
+			float cost[8][8];
+			int assignment[8];
+			bool isSlotEmpty[8];
+			for (int s = 0; s < 8; s++)
+			{
+				isSlotEmpty[s] = true, assignment[s] = -1;
+				bvhvec3 ds(
+					(((s >> 2) & 1) == 1) ? -1.0f : 1.0f,
+					(((s >> 1) & 1) == 1) ? -1.0f : 1.0f,
+					(((s >> 0) & 1) == 1) ? -1.0f : 1.0f
+				);
+				for (int i = 0; i < 8; i++) if (node->child[i] == 0) cost[s][i] = 1e30f; else
+				{
+					BVHNode8* const child = &bvh8Node[node->child[i]];
+					bvhvec3 childCentroid = (child->aabbMin + child->aabbMax) * 0.5f;
+					cost[s][i] = dot( childCentroid - nodeCentroid, ds );
+				}
+			}
+			while (1)
+			{
+				float minCost = 1e30f;
+				int minEntryx = -1, minEntryy = -1;
+				for (int s = 0; s < 8; s++) for (int i = 0; i < 8; i++)
+					if (assignment[i] == -1 && isSlotEmpty[s] && cost[s][i] < minCost)
+						minCost = cost[s][i], minEntryx = s, minEntryy = i;
+				if (minEntryx == -1 && minEntryy == -1) break;
+				isSlotEmpty[minEntryx] = false, assignment[minEntryy] = minEntryx;
+			}
+			for (int i = 0; i < 8; i++) if (assignment[i] == -1) for (int s = 0; s < 8; s++) if (isSlotEmpty[s])
+			{
+				isSlotEmpty[s] = false, assignment[i] = s;
+				break;
+			}
+			const BVHNode8 oldNode = *node;
+			for (int i = 0; i < 8; i++) node->child[assignment[i]] = oldNode.child[i];
+			// calculate quantization parameters for each axis
+			int ex = (int)((char)ceilf( log2f( (nodeHi.x - nodeLo.x) / 255.0f ) ));
+			int ey = (int)((char)ceilf( log2f( (nodeHi.y - nodeLo.y) / 255.0f ) ));
+			int ez = (int)((char)ceilf( log2f( (nodeHi.z - nodeLo.z) / 255.0f ) ));
+			// encode output
+			int internalChildCount = 0, leafChildPrimitiveCount = 0, childBaseIndex = 0, triangleBaseIndex = 0;
+			unsigned char imask = 0;
+		#ifdef __GNUC__
+		#pragma GCC diagnostic push
+		#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+		#endif
+			for (int i = 0; i < 8; i++)
+			{
+				if (node->child[i] == 0) continue;
+				BVHNode8* const child = &bvh8Node[node->child[i]];
+				const int qlox = (int)floorf( (child->aabbMin.x - nodeLo.x) / powf( 2, (float)ex ) );
+				const int qloy = (int)floorf( (child->aabbMin.y - nodeLo.y) / powf( 2, (float)ey ) );
+				const int qloz = (int)floorf( (child->aabbMin.z - nodeLo.z) / powf( 2, (float)ez ) );
+				const int qhix = (int)ceilf( (child->aabbMax.x - nodeLo.x) / powf( 2, (float)ex ) );
+				const int qhiy = (int)ceilf( (child->aabbMax.y - nodeLo.y) / powf( 2, (float)ey ) );
+				const int qhiz = (int)ceilf( (child->aabbMax.z - nodeLo.z) / powf( 2, (float)ez ) );
+				unsigned char* const childBoundsBaseAddr = (unsigned char*)&bvh8Compact[currentNodeAddr + 2];
+				childBoundsBaseAddr[i + 0] = (unsigned char)qlox;
+				childBoundsBaseAddr[i + 24] = (unsigned char)qhix;
+				childBoundsBaseAddr[i + 8] = (unsigned char)qloy;
+				childBoundsBaseAddr[i + 32] = (unsigned char)qhiy;
+				childBoundsBaseAddr[i + 16] = (unsigned char)qloz;
+				childBoundsBaseAddr[i + 40] = (unsigned char)qhiz;
+				if (!child->isLeaf())
+				{
+					// interior node, set params and push onto stack
+					const int childNodeAddr = nodeDataPtr;
+					if (internalChildCount++ == 0) childBaseIndex = childNodeAddr / 5;
+					nodeDataPtr += 5, imask |= 1 << i;
+					// set the meta field - This calculation assumes children are stored contiguously.
+					unsigned char* const childMetaField = ((unsigned char*)&bvh8Compact[currentNodeAddr + 1]) + 8;
+					childMetaField[i] = (1 << 5) | (24 + (unsigned char)i); // I don't see how this accounts for empty children?
+					stackNodePtr[stackPtr] = child, stackNodeAddr[stackPtr++] = childNodeAddr; // counted in float4s
+					internalChildCount++;
+					continue;
+				}
+				// leaf node
+				const unsigned int tcount = tinybvh_min( child->triCount, 3u ); // TODO: ensure that's the case; clamping for now.
+				if (leafChildPrimitiveCount == 0) triangleBaseIndex = triDataPtr;
+				int unaryEncodedPrimitiveCount = tcount == 1 ? 0b001 : tcount == 2 ? 0b011 : 0b111;
+				// set the meta field - This calculation assumes children are stored contiguously.
+				unsigned char* const childMetaField = ((unsigned char*)&bvh8Compact[currentNodeAddr + 1]) + 8;
+				childMetaField[i] = (unsigned char)((unaryEncodedPrimitiveCount << 5) | leafChildPrimitiveCount);
+				leafChildPrimitiveCount += tcount;
+				for (unsigned int j = 0; j < tcount; j++)
+				{
+					int primitiveIndex = triIdx[child->firstTri + j];
+					bvhvec4 t = verts[primitiveIndex * 3 + 0];
+					t.w = *(float*)&primitiveIndex;
+					bvh8Tris[triDataPtr++] = t;
+					bvh8Tris[triDataPtr++] = verts[primitiveIndex * 3 + 1];
+					bvh8Tris[triDataPtr++] = verts[primitiveIndex * 3 + 2];
+				}
+			}
+			unsigned char exyzAndimask[4] = { *(unsigned char*)&ex, *(unsigned char*)&ey, *(unsigned char*)&ez, imask };
+			bvh8Compact[currentNodeAddr + 0] = bvhvec4( nodeLo, *(float*)&exyzAndimask );
+			bvh8Compact[currentNodeAddr + 1].x = *(float*)&childBaseIndex;
+			bvh8Compact[currentNodeAddr + 1].y = *(float*)&triangleBaseIndex;
+		#ifdef __GNUC__
+		#pragma GCC diagnostic pop
+		#endif
+		}
+		usedCWBVHBlocks = nodeDataPtr;
 	}
 	else if (from == VERBOSE && to == WALD_32BYTE)
 	{
@@ -1469,6 +1619,9 @@ int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 	case BASIC_BVH8:
 		return Intersect_BasicBVH8( ray );
 		break;
+	case CWBVH:
+		return Intersect_CWBVH( ray );
+		break;
 	default:
 		assert( false );
 	};
@@ -1576,14 +1729,14 @@ int BVH::Intersect_BasicBVH4( Ray& ray ) const
 // Intersect_BasicBVH8. For testing the converted data only; not efficient.
 int BVH::Intersect_BasicBVH8( Ray& ray ) const
 {
-	BVHNode8* node = &bvh8Node[0], * stack[128];
+	BVHNode8* node = &bvh8Node[0], * stack[512];
 	unsigned int stackPtr = 0, steps = 0;
 	while (1)
 	{
 		steps++;
 		if (node->isLeaf()) for (unsigned int i = 0; i < node->triCount; i++)
 			IntersectTri( ray, triIdx[node->firstTri + i] );
-		else for (unsigned int i = 0; i < node->childCount; i++)
+		else for (unsigned int i = 0; i < 8; i++) if (node->child[i])
 		{
 			BVHNode8* child = bvh8Node + node->child[i];
 			float dist = IntersectAABB( ray, child->aabbMin, child->aabbMax );
@@ -1623,10 +1776,10 @@ int BVH::Intersect_Alt4BVH( Ray& ray ) const
 		// reconstruct conservative child aabbs
 		const uchar4 d0 = as_uchar4( data0.w ), d1 = as_uchar4( data1.w ), d2 = as_uchar4( data2.x );
 		const uchar4 d3 = as_uchar4( data2.y ), d4 = as_uchar4( data2.z ), d5 = as_uchar4( data2.w );
-		const bvhvec3 c0min = bmin + extent * bvhvec3(d0.x, d2.x, d4.x), c0max = bmin + extent * bvhvec3(d1.x, d3.x, d5.x);
-		const bvhvec3 c1min = bmin + extent * bvhvec3(d0.y, d2.y, d4.y), c1max = bmin + extent * bvhvec3(d1.y, d3.y, d5.y);
-		const bvhvec3 c2min = bmin + extent * bvhvec3(d0.z, d2.z, d4.z), c2max = bmin + extent * bvhvec3(d1.z, d3.z, d5.z);
-		const bvhvec3 c3min = bmin + extent * bvhvec3(d0.w, d2.w, d4.w), c3max = bmin + extent * bvhvec3(d1.w, d3.w, d5.w);
+		const bvhvec3 c0min = bmin + extent * bvhvec3( d0.x, d2.x, d4.x ), c0max = bmin + extent * bvhvec3( d1.x, d3.x, d5.x );
+		const bvhvec3 c1min = bmin + extent * bvhvec3( d0.y, d2.y, d4.y ), c1max = bmin + extent * bvhvec3( d1.y, d3.y, d5.y );
+		const bvhvec3 c2min = bmin + extent * bvhvec3( d0.z, d2.z, d4.z ), c2max = bmin + extent * bvhvec3( d1.z, d3.z, d5.z );
+		const bvhvec3 c3min = bmin + extent * bvhvec3( d0.w, d2.w, d4.w ), c3max = bmin + extent * bvhvec3( d1.w, d3.w, d5.w );
 		// intersect child aabbs
 		const bvhvec3 t1a = (c0min - ray.O) * ray.rD, t2a = (c0max - ray.O) * ray.rD;
 		const bvhvec3 t1b = (c1min - ray.O) * ray.rD, t2b = (c1max - ray.O) * ray.rD;
@@ -2407,6 +2560,185 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 	}
 	return steps;
 }
+
+#ifdef _MSC_VER
+
+// Intersect_CWBVH:
+// Intersect a compressed 8-wide BVH with a ray. For debugging only, not efficient.
+// Not technically limited to BVH_USEAVX, but __lzcnt and __popcnt will require
+// exotic compiler flags (in combination with __builtin_ia32_lzcnt_u32), so... Since
+// this is just here to test data before it goes to the GPU: MSVC-only for now.
+#define STACK_POP() { ngroup = traversalStack[--stackPtr]; }
+#define STACK_PUSH() { traversalStack[stackPtr++] = ngroup; }
+static inline unsigned int extract_byte( const unsigned int i, const unsigned int n ) { return (i >> (n * 8)) & 0xFF; }
+static inline unsigned int sign_extend_s8x4( const unsigned int i )
+{
+	// asm("prmt.b32 %0, %1, 0x0, 0x0000BA98;" : "=r"(v) : "r"(i)); // BA98: 1011`1010`1001`1000 
+	// with the given parameters, prmt will extend the sign to all bits in a byte. 
+	unsigned int b0 = (i & 0b10000000000000000000000000000000) ? 0xff000000 : 0;
+	unsigned int b1 = (i & 0b00000000100000000000000000000000) ? 0x00ff0000 : 0;
+	unsigned int b2 = (i & 0b00000000000000001000000000000000) ? 0x0000ff00 : 0;
+	unsigned int b3 = (i & 0b00000000000000000000000010000000) ? 0x000000ff : 0;
+	return b0 + b1 + b2 + b3; // probably can do better than this.
+}
+static inline unsigned int __bfind( const unsigned int v ) { return 31 - __lzcnt( v ); }
+inline unsigned int __popc( const unsigned int v ) { return __popcnt( v ); }
+int BVH::Intersect_CWBVH( Ray& ray ) const
+{
+	bvhuint2 traversalStack[128];
+	unsigned int hitAddr = 0, stackPtr = 0;
+	bvhvec2 triangleuv( 0, 0 );
+	const bvhvec4* blasNodes = bvh8Compact;
+	const bvhvec4* blasTris = bvh8Tris;
+	float tmin = 0, tmax = ray.hit.t;
+	const unsigned int octinv = (7 - ((ray.D.x < 0 ? 4 : 0) | (ray.D.y < 0 ? 2 : 0) | (ray.D.z < 0 ? 1 : 0))) * 0x1010101;
+	bvhuint2 ngroup = bvhuint2( 0, 0b10000000000000000000000000000000 ), tgroup = bvhuint2( 0 );
+	do
+	{
+		if (ngroup.y > 0x00FFFFFF)
+		{
+			const unsigned int hits = ngroup.y, imask = ngroup.y;
+			const unsigned int child_bit_index = __bfind( hits );
+			const unsigned int child_node_base_index = ngroup.x;
+			ngroup.y &= ~(1 << child_bit_index);
+			if (ngroup.y > 0x00FFFFFF) { STACK_PUSH( /* nodeGroup */ ); }
+			{
+				const unsigned int slot_index = (child_bit_index - 24) ^ (octinv & 255);
+				const unsigned int relative_index = __popc( imask & ~(0xFFFFFFFF << slot_index) );
+				const unsigned int child_node_index = child_node_base_index + relative_index;
+				const bvhvec4 n0 = blasNodes[child_node_index * 5 + 0];
+				const bvhvec4 n1 = blasNodes[child_node_index * 5 + 1];
+				const bvhvec4 n2 = blasNodes[child_node_index * 5 + 2];
+				const bvhvec4 n3 = blasNodes[child_node_index * 5 + 3];
+				const bvhvec4 n4 = blasNodes[child_node_index * 5 + 4];
+				const bvhvec3 p = n0;
+				bvhint3 e;
+				e.x = (int)*((char*)&n0.w + 0), e.y = (int)*((char*)&n0.w + 1), e.z = (int)*((char*)&n0.w + 2);
+				ngroup.x = as_uint( n1.x ), tgroup.x = as_uint( n1.y ), tgroup.y = 0;
+				unsigned int hitmask = 0;
+				const unsigned int vx = (e.x + 127) << 23u; const float adjusted_idirx = *(float*)&vx * ray.rD.x;
+				const unsigned int vy = (e.y + 127) << 23u; const float adjusted_idiry = *(float*)&vy * ray.rD.y;
+				const unsigned int vz = (e.z + 127) << 23u; const float adjusted_idirz = *(float*)&vz * ray.rD.z;
+				const float origx = -(ray.O.x - p.x) * ray.rD.x;
+				const float origy = -(ray.O.y - p.y) * ray.rD.y;
+				const float origz = -(ray.O.z - p.z) * ray.rD.z;
+				{	// First 4
+					const unsigned int meta4 = *(unsigned int*)&n1.z;
+					const unsigned int is_inner4 = (meta4 & (meta4 << 1)) & 0x10101010;
+					const unsigned int inner_mask4 = sign_extend_s8x4( is_inner4 << 3 );
+					const unsigned int bit_index4 = (meta4 ^ (octinv & inner_mask4)) & 0x1F1F1F1F;
+					const unsigned int child_bits4 = (meta4 >> 5) & 0x07070707;
+					unsigned int swizzledLox = (ray.rD.x < 0) ? *(unsigned int*)&n3.z : *(unsigned int*)&n2.x, swizzledHix = (ray.rD.x < 0) ? *(unsigned int*)&n2.x : *(unsigned int*)&n3.z;
+					unsigned int swizzledLoy = (ray.rD.y < 0) ? *(unsigned int*)&n4.x : *(unsigned int*)&n2.z, swizzledHiy = (ray.rD.y < 0) ? *(unsigned int*)&n2.z : *(unsigned int*)&n4.x;
+					unsigned int swizzledLoz = (ray.rD.z < 0) ? *(unsigned int*)&n4.z : *(unsigned int*)&n3.x, swizzledHiz = (ray.rD.z < 0) ? *(unsigned int*)&n3.x : *(unsigned int*)&n4.z;
+					float tminx[4], tminy[4], tminz[4], tmaxx[4], tmaxy[4], tmaxz[4];
+					tminx[0] = ((swizzledLox >> 0) & 0xFF) * adjusted_idirx + origx, tminx[1] = ((swizzledLox >> 8) & 0xFF) * adjusted_idirx + origx, tminx[2] = ((swizzledLox >> 16) & 0xFF) * adjusted_idirx + origx;
+					tminx[3] = ((swizzledLox >> 24) & 0xFF) * adjusted_idirx + origx, tminy[0] = ((swizzledLoy >> 0) & 0xFF) * adjusted_idiry + origy, tminy[1] = ((swizzledLoy >> 8) & 0xFF) * adjusted_idiry + origy;
+					tminy[2] = ((swizzledLoy >> 16) & 0xFF) * adjusted_idiry + origy, tminy[3] = ((swizzledLoy >> 24) & 0xFF) * adjusted_idiry + origy, tminz[0] = ((swizzledLoz >> 0) & 0xFF) * adjusted_idirz + origz;
+					tminz[1] = ((swizzledLoz >> 8) & 0xFF) * adjusted_idirz + origz, tminz[2] = ((swizzledLoz >> 16) & 0xFF) * adjusted_idirz + origz, tminz[3] = ((swizzledLoz >> 24) & 0xFF) * adjusted_idirz + origz;
+					tmaxx[0] = ((swizzledHix >> 0) & 0xFF) * adjusted_idirx + origx, tmaxx[1] = ((swizzledHix >> 8) & 0xFF) * adjusted_idirx + origx, tmaxx[2] = ((swizzledHix >> 16) & 0xFF) * adjusted_idirx + origx;
+					tmaxx[3] = ((swizzledHix >> 24) & 0xFF) * adjusted_idirx + origx, tmaxy[0] = ((swizzledHiy >> 0) & 0xFF) * adjusted_idiry + origy, tmaxy[1] = ((swizzledHiy >> 8) & 0xFF) * adjusted_idiry + origy;
+					tmaxy[2] = ((swizzledHiy >> 16) & 0xFF) * adjusted_idiry + origy, tmaxy[3] = ((swizzledHiy >> 24) & 0xFF) * adjusted_idiry + origy, tmaxz[0] = ((swizzledHiz >> 0) & 0xFF) * adjusted_idirz + origz;
+					tmaxz[1] = ((swizzledHiz >> 8) & 0xFF) * adjusted_idirz + origz, tmaxz[2] = ((swizzledHiz >> 16) & 0xFF) * adjusted_idirz + origz, tmaxz[3] = ((swizzledHiz >> 24) & 0xFF) * adjusted_idirz + origz;
+					for (int i = 0; i < 4; i++)
+					{
+						// Use VMIN, VMAX to compute the slabs
+						const float cmin = fmax( fmax( fmax( tminx[i], tminy[i] ), tminz[i] ), tmin );
+						const float cmax = fmin( fmin( fmin( tmaxx[i], tmaxy[i] ), tmaxz[i] ), tmax );
+						if (cmin > cmax) continue;
+						const unsigned int child_bits = extract_byte( child_bits4, i );
+						const unsigned int bit_index = extract_byte( bit_index4, i );
+						hitmask |= child_bits << bit_index;
+					}
+				}
+				{	// Second 4
+					const unsigned int meta4 = *(unsigned int*)&n1.w;
+					const unsigned int is_inner4 = (meta4 & (meta4 << 1)) & 0x10101010;
+					const unsigned int inner_mask4 = sign_extend_s8x4( is_inner4 << 3 );
+					const unsigned int bit_index4 = (meta4 ^ (octinv & inner_mask4)) & 0x1F1F1F1F;
+					const unsigned int child_bits4 = (meta4 >> 5) & 0x07070707;
+					unsigned int swizzledLox = (ray.rD.x < 0) ? *(unsigned int*)&n3.w : *(unsigned int*)&n2.y, swizzledHix = (ray.rD.x < 0) ? *(unsigned int*)&n2.y : *(unsigned int*)&n3.w;
+					unsigned int swizzledLoy = (ray.rD.y < 0) ? *(unsigned int*)&n4.y : *(unsigned int*)&n2.w, swizzledHiy = (ray.rD.y < 0) ? *(unsigned int*)&n2.w : *(unsigned int*)&n4.y;
+					unsigned int swizzledLoz = (ray.rD.z < 0) ? *(unsigned int*)&n4.w : *(unsigned int*)&n3.y, swizzledHiz = (ray.rD.z < 0) ? *(unsigned int*)&n3.y : *(unsigned int*)&n4.w;
+					float tminx[4], tminy[4], tminz[4], tmaxx[4], tmaxy[4], tmaxz[4];
+					tminx[0] = ((swizzledLox >> 0) & 0xFF) * adjusted_idirx + origx, tminx[1] = ((swizzledLox >> 8) & 0xFF) * adjusted_idirx + origx, tminx[2] = ((swizzledLox >> 16) & 0xFF) * adjusted_idirx + origx;
+					tminx[3] = ((swizzledLox >> 24) & 0xFF) * adjusted_idirx + origx, tminy[0] = ((swizzledLoy >> 0) & 0xFF) * adjusted_idiry + origy, tminy[1] = ((swizzledLoy >> 8) & 0xFF) * adjusted_idiry + origy;
+					tminy[2] = ((swizzledLoy >> 16) & 0xFF) * adjusted_idiry + origy, tminy[3] = ((swizzledLoy >> 24) & 0xFF) * adjusted_idiry + origy, tminz[0] = ((swizzledLoz >> 0) & 0xFF) * adjusted_idirz + origz;
+					tminz[1] = ((swizzledLoz >> 8) & 0xFF) * adjusted_idirz + origz, tminz[2] = ((swizzledLoz >> 16) & 0xFF) * adjusted_idirz + origz, tminz[3] = ((swizzledLoz >> 24) & 0xFF) * adjusted_idirz + origz;
+					tmaxx[0] = ((swizzledHix >> 0) & 0xFF) * adjusted_idirx + origx, tmaxx[1] = ((swizzledHix >> 8) & 0xFF) * adjusted_idirx + origx, tmaxx[2] = ((swizzledHix >> 16) & 0xFF) * adjusted_idirx + origx;
+					tmaxx[3] = ((swizzledHix >> 24) & 0xFF) * adjusted_idirx + origx, tmaxy[0] = ((swizzledHiy >> 0) & 0xFF) * adjusted_idiry + origy, tmaxy[1] = ((swizzledHiy >> 8) & 0xFF) * adjusted_idiry + origy;
+					tmaxy[2] = ((swizzledHiy >> 16) & 0xFF) * adjusted_idiry + origy, tmaxy[3] = ((swizzledHiy >> 24) & 0xFF) * adjusted_idiry + origy, tmaxz[0] = ((swizzledHiz >> 0) & 0xFF) * adjusted_idirz + origz;
+					tmaxz[1] = ((swizzledHiz >> 8) & 0xFF) * adjusted_idirz + origz, tmaxz[2] = ((swizzledHiz >> 16) & 0xFF) * adjusted_idirz + origz, tmaxz[3] = ((swizzledHiz >> 24) & 0xFF) * adjusted_idirz + origz;
+					for (int i = 0; i < 4; i++)
+					{
+						const float cmin = fmax( fmax( fmax( tminx[i], tminy[i] ), tminz[i] ), tmin );
+						const float cmax = fmin( fmin( fmin( tmaxx[i], tmaxy[i] ), tmaxz[i] ), tmax );
+						if (cmin > cmax) continue;
+						const unsigned int child_bits = extract_byte( child_bits4, i );
+						const unsigned int bit_index = extract_byte( bit_index4, i );
+						hitmask |= child_bits << bit_index;
+					}
+				}
+				ngroup.y = (hitmask & 0xFF000000) | (as_uint( n0.w ) >> 24), tgroup.y = hitmask & 0x00FFFFFF;
+			}
+		}
+		else tgroup = ngroup, ngroup = bvhuint2( 0 );
+		while (tgroup.y != 0)
+		{
+			int triangleIndex = __bfind( tgroup.y );
+			int triAddr = tgroup.x + triangleIndex * 3;
+			const bvhvec3 v0 = blasTris[triAddr];
+			const bvhvec3 edge1 = bvhvec3( blasTris[triAddr + 1] ) - v0;
+			const bvhvec3 edge2 = bvhvec3( blasTris[triAddr + 2] ) - v0;
+			const bvhvec3 h = cross( ray.D, edge2 );
+			const float a = dot( edge1, h );
+			if (fabs( a ) > 0.0000001f)
+			{
+				const float f = 1 / a;
+				const bvhvec3 s = ray.O - v0;
+				const float u = f * dot( s, h );
+				if (u >= 0 && u <= 1)
+				{
+					const bvhvec3 q = cross( s, edge1 );
+					const float v = f * dot( ray.D, q );
+					if (v >= 0 && u + v <= 1)
+					{
+						const float d = f * dot( edge2, q );
+						if (d > 0.0f && d < tmax)
+						{
+							triangleuv = bvhvec2( u, v ), tmax = d;
+							hitAddr = as_uint( blasTris[triAddr].w );
+						}
+					}
+				}
+			}
+			tgroup.y -= 1 << triangleIndex;
+		}
+		if (ngroup.y <= 0x00FFFFFF)
+		{
+			if (stackPtr > 0) { STACK_POP( /* nodeGroup */ ); }
+			else
+			{
+				ray.hit.t = tmax;
+				if (tmax < 1e30f)
+					ray.hit.u = triangleuv.x, ray.hit.v = triangleuv.y;
+				ray.hit.prim = hitAddr;
+				break;
+			}
+		}
+	} while (true);
+	return 0;
+}
+
+#else
+
+int BVH::Intersect_CWBVH( Ray& ray ) const
+{
+	assert( false ); // only available for MSVC for the moment.
+	return 0;
+}
+
+#endif // _MSC_VER
 
 #else
 
