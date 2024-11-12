@@ -23,6 +23,9 @@ elseif (EMSCRIPTEN)
 
 	# Enable thread support for WASM (note that you need special http headers now https://emscripten.org/docs/porting/pthreads.html )
 	option(emcc_threads "Enable Threads in WASM (note that means you need to change your http headers)" OFF)
+
+	# Enable C/C++ main thread as a proxy thread to avoid blocking DOM/UI thread https://emscripten.org/docs/porting/pthreads.html
+	option(emcc_proxy_main "Enable C/C++ main thread as a proxy thread to avoid blocking DOM/UI thread" ${emcc_threads})
 endif()
 
 enable_testing()
@@ -90,7 +93,7 @@ if (NOT MSVC)
 	elseif (EMSCRIPTEN)
 		if (emcc_threads)
 			set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags} -pthread)
-			set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -pthread)
+			set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -pthread -sUSE_PTHREADS=1 -sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency)
 
 			if (FALSE)
 				# From:
@@ -103,6 +106,10 @@ if (NOT MSVC)
 				# Then link it here
 				set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags} -fopenmp)
 				set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -fopenmp)
+			endif()
+
+			if (emcc_proxy_main)
+				set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -sPROXY_TO_PTHREAD=1)
 			endif()
 		endif()
 	endif()
