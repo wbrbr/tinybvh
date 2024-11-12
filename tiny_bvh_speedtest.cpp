@@ -411,6 +411,6 @@ int main()
 
 #endif
 
-	// all done.
+	printf( "all done." );
 	return 0;
 }
