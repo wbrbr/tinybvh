@@ -524,6 +524,9 @@ public:
 #ifdef TINYBVH_IMPLEMENTATION
 
 #include <assert.h>			// for assert
+#ifdef _MSC_VER
+#include <intrin.h>			// for __lzcnt
+#endif
 
 namespace tinybvh {
 
