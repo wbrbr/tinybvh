@@ -41,11 +41,11 @@ endif()
 if (NOT MSVC)
 	# Produce debug symbols and set optimization level
 	set(common_cxx_flags
-		-g $<$<CONFIG:Release>:-O3>
+		$<$<OR:$<CONFIG:RelWithDebInfo>,$<CONFIG:Debug>>:-g> $<$<OR:$<CONFIG:RelWithDebInfo>,$<CONFIG:Release>>:-O3>
 	)
 
 	set(common_link_flags
-		-g
+		$<$<OR:$<CONFIG:RelWithDebInfo>,$<CONFIG:Debug>>:-g>
 	)
 
 	if (NOT EMSCRIPTEN)
