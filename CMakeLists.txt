@@ -15,7 +15,9 @@ elseif (EMSCRIPTEN)
 	set(CMAKE_EXECUTABLE_SUFFIX ".html")
 
 	option(enable_asan "Enable ASAN on the build (it'll slow down the app)" OFF)
-	set()
+
+	set(emcc_simd "fixed" CACHE STRING "SIMD type to use in the build (none, fixed, relaxed)")
+	set_property(CACHE emcc_simd PROPERTY STRINGS none fixed relaxed)
 endif()
 
 enable_testing()
@@ -54,6 +56,14 @@ if (NOT MSVC)
 			set(common_cxx_flags ${common_cxx_flags} -fsanitize=address)
 			set(common_link_flags ${common_link_flags} -fsanitize=address)
 		endif()
+
+		string(TOLOWER "${emcc_simd}" emcc_simd_lower)
+		if (emcc_simd_lower STREQUAL fixed)
+			set(common_cxx_flags ${common_cxx_flags} -msimd128 -mavx)
+		elseif (emcc_simd_lower STREQUAL relaxed)
+			set(common_cxx_flags ${common_cxx_flags} -mrelaxed-simd -mavx)
+		endif()
+
 	endif()
 
 	target_compile_options(tiny_bvh_test PRIVATE ${common_cxx_flags})

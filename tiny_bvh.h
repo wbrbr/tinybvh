@@ -69,7 +69,7 @@ THE SOFTWARE.
 #define BVHBINS 8
 
 // include fast AVX BVH builder
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__) || defined(_M_X64) || defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
 #define BVH_USEAVX
 #endif
 
@@ -99,8 +99,8 @@ THE SOFTWARE.
 #include <cmath>
 #include <cstring>
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
-#if defined(__x86_64__) || defined(_M_X64)
-// https://stackoverflow.com/questions/32612881/why-use-mm-malloc-as-opposed-to-aligned-malloc-alligned-alloc-or-posix-mem
+#if defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
+// https://emscripten.org/docs/porting/simd.html
 #include <xmmintrin.h>
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
 #define ALIGNED_FREE( x ) _mm_free( x )
