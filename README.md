@@ -47,13 +47,13 @@ The current version of the library is rapidly gaining functionality. Please expe
 Plans:
 
 * Optimize:
-** Single-prim-leaf BVHs in 'verbose' layout
-** Better BVH::Optimize interface
-** Faster Optimize algorithm (complete paper implementation)
+  * Single-prim-leaf BVHs in 'verbose' layout
+  * Better BVH::Optimize interface
+  * Faster Optimize algorithm (complete paper implementation)
 * OpenCL traversal example
-** AILA_LAINE traversal
-** BVH4_GPU traversal
-** Efficient CWBVH GPU traversal
+  * AILA_LAINE traversal
+  * BVH4_GPU traversal
+  * Efficient CWBVH GPU traversal
 * TLAS/BLAS traversal with BLAS transforms
   
 These features have already been completed but need polishing and adapting to the interface, once it is settled. CWBVH GPU traversal combined with an optimized SBVH provides state-of-the-art **#RTXOff** performance; expect _billions of rays per second_.
