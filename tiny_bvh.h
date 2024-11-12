@@ -1621,6 +1621,8 @@ int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 	case ALT_SOA:
 		return Intersect_AltSoA( ray );
 		break;
+	#endif
+	#ifdef BVH_USE_LZCNT
 	case CWBVH:
 		return Intersect_CWBVH( ray );
 		break;
