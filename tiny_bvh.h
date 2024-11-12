@@ -1619,9 +1619,11 @@ int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 	case BASIC_BVH8:
 		return Intersect_BasicBVH8( ray );
 		break;
+	#ifdef BVH_USEAVX
 	case CWBVH:
 		return Intersect_CWBVH( ray );
 		break;
+	#endif
 	default:
 		assert( false );
 	};
@@ -2739,15 +2741,6 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 }
 
 #endif // _MSC_VER
-
-#else
-
-int BVH::Intersect_AltSoA( Ray& ray ) const
-{
-	// not implemented for platforms that do not support SSE/AVX.
-	assert( false );
-	return 0;
-}
 
 #endif // BVH_USEAVX
 
