@@ -31,9 +31,9 @@ if (NOT EMSCRIPTEN)
 endif()
 
 if (NOT MSVC)
-	# Produce debug symbols
+	# Produce debug symbols and set optimization level
 	set(common_cxx_flags
-		-g
+		-g $<$<CONFIG:Release>:-O3>
 	)
 
 	set(common_link_flags
