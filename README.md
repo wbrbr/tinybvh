@@ -46,10 +46,11 @@ The current version of the library is rapidly gaining functionality. Please expe
 
 Plans:
 
-* Optimize:
+* BVH::Optimize:
   * Single-prim-leaf BVHs in 'verbose' layout
   * Better BVH::Optimize interface
   * Faster Optimize algorithm (complete paper implementation)
+  * Understanding optimized SBVH performance
 * OpenCL traversal example
   * AILA_LAINE traversal
   * BVH4_GPU traversal
