@@ -48,8 +48,7 @@ The current version of the library is rapidly gaining functionality. Please expe
 Plans:
 
 * BVH::Optimize:
-  * Single-prim-leaf BVHs in 'verbose' layout
-  * Better BVH::Optimize interface
+  * Properly use C_trav and C_int for SAH
   * Faster Optimize algorithm (complete paper implementation)
   * Understanding optimized SBVH performance
 * CPU single-ray performance
