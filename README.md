@@ -31,7 +31,7 @@ The **performance measurement tool** use OpenMP and can be compiled with:
 
 ````g++ -std=c++20 -mavx -Ofast -fopenmp tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
-Running the performance tool using Emsscripten:
+Running the performance tool using **Emscripten**:
 
 * Download the EMSCRIPTEN compiler here
 * Start a terminal with the emsdk environment (For Windows: emsdk\emsdk.bat activate latest)
