@@ -31,6 +31,15 @@ The **performance measurement tool** use OpenMP and can be compiled with:
 
 ````g++ -std=c++20 -mavx -Ofast -fopenmp tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
+Running the performance tool using Emsscripten:
+
+* Download the EMSCRIPTEN compiler here
+* Start a terminal with the emsdk environment (For Windows: emsdk\emsdk.bat activate latest)
+* Configure CMake, e. g.: ````emcmake cmake -S . -B ./build/web -G "Ninja Multi-Config" -Demcc_threads=ON -Demcc_proxy_main=ON````
+* Build with:  ````cmake --build .\build\web\ --config Release````
+* Use a HTTP server for testing. E.g. ````python custom-http.py -d .\build\web\Release\````
+* Go to localhost:8000 and click a HTML page to test.
+  
 # Version 0.7.5
 This version of the library includes the following functionality:
 * Binned SAH BVH builder
