@@ -33,7 +33,7 @@ The **performance measurement tool** use OpenMP and can be compiled with:
 
 Running the performance tool using **Emscripten**:
 
-* Download the EMSCRIPTEN compiler here
+* Download the EMSCRIPTEN compiler [here](https://emscripten.org/docs/getting_started/downloads.html)
 * Start a terminal with the emsdk environment (For Windows: emsdk\emsdk.bat activate latest)
 * Configure CMake, e. g.: ````emcmake cmake -S . -B ./build/web -G "Ninja Multi-Config" -Demcc_threads=ON -Demcc_proxy_main=ON````
 * Build with:  ````cmake --build .\build\web\ --config Release````
