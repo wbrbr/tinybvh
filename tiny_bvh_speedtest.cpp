@@ -9,6 +9,9 @@
 #ifdef _WIN32
 #include <intrin.h>		// for __cpuidex
 #endif
+#ifdef __EMSCRIPTEN__ 
+#include <emscripten/version.h> // for __EMSCRIPTEN_major__, __EMSCRIPTEN_minor__
+#endif
 
 // 'screen resolution': see tiny_bvh_fenster.cpp; this program traces the
 // same rays, but without visualization - just performance statistics.
@@ -122,6 +125,9 @@ int main()
 	// determine compiler
 #ifdef _MSC_VER
 	printf( "(MSVC %i build)\n", _MSC_VER );
+#elif defined __EMSCRIPTEN__
+	// EMSCRIPTEN needs to be before clang or gcc
+	printf("(emcc %i.%i build)\n", __EMSCRIPTEN_major__, __EMSCRIPTEN_minor__);
 #elif defined __clang__
 	printf( "(clang %i.%i build)\n", __clang_major__, __clang_minor__ );
 #elif defined __GNUC__
@@ -405,6 +411,6 @@ int main()
 
 #endif
 
-	// all done.
+	printf( "all done." );
 	return 0;
 }

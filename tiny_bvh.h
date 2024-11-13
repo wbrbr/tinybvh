@@ -71,7 +71,7 @@ THE SOFTWARE.
 #define BVHBINS 8
 
 // include fast AVX BVH builder
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__) || defined(_M_X64) || defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
 #define BVH_USEAVX
 #endif
 
@@ -95,6 +95,24 @@ THE SOFTWARE.
 #define ALIGNED( x ) __declspec( align( x ) )
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( x ), 64 ) )
 #define ALIGNED_FREE( x ) _aligned_free( x )
+#elif defined(__EMSCRIPTEN__)
+// EMSCRIPTEN (needs to be before gcc and clang to avoid misdetection) 
+#include <cstdlib>
+#include <cmath>
+#include <cstring>
+#define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
+#if defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
+// https://emscripten.org/docs/porting/simd.html
+#include <xmmintrin.h>
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
+#define ALIGNED_FREE( x ) _mm_free( x )
+#else
+// Size needs to be a multiple of Alignment in the standard (in EMSCRIPTEN this is enforced)
+// See https://en.cppreference.com/w/c/memory/aligned_alloc
+#define MAKE_MULIPLE_64( x ) ( ( ( x ) + 63 ) & ( ~0x3f ) )
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, MAKE_MULIPLE_64( x ) ) )
+#define ALIGNED_FREE( x ) free( x )
+#endif
 #else
 // gcc / clang
 #include <cstdlib>
@@ -2578,6 +2596,8 @@ static unsigned __bfind( unsigned x ) // https://github.com/mackron/refcode/blob
 {
 #if defined(_MSC_VER) && !defined(__clang__)
 	return 31 - __lzcnt( x );
+#elif defined(__EMSCRIPTEN__)
+	return 31 - __builtin_clz(x);
 #elif defined(__GNUC__) || defined(__clang__)
 	unsigned r;
 	__asm__ __volatile__( "lzcnt{l %1, %0| %0, %1}" : "=r"(r) : "r"(x) : "cc" );
