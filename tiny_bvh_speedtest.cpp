@@ -21,6 +21,7 @@
 // tests to perform
 #define BUILD_REFERENCE
 #define BUILD_AVX
+#define BUILD_SBVH
 #define TRAVERSE_2WAY_ST
 #define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_SOA2WAY_ST
@@ -127,7 +128,7 @@ int main()
 	printf( "(MSVC %i build)\n", _MSC_VER );
 #elif defined __EMSCRIPTEN__
 	// EMSCRIPTEN needs to be before clang or gcc
-	printf("(emcc %i.%i build)\n", __EMSCRIPTEN_major__, __EMSCRIPTEN_minor__);
+	printf( "(emcc %i.%i build)\n", __EMSCRIPTEN_major__, __EMSCRIPTEN_minor__ );
 #elif defined __clang__
 	printf( "(clang %i.%i build)\n", __clang_major__, __clang_minor__ );
 #elif defined __GNUC__
@@ -166,6 +167,7 @@ int main()
 
 #ifdef BUILD_AVX
 #ifdef BVH_USEAVX
+
 	// measure single-core bvh construction time - AVX builder
 	printf( "- fast AVX builder:  " );
 	t.reset();
@@ -173,11 +175,12 @@ int main()
 	float buildTimeAVX = t.elapsed() / 3.0f;
 	printf( "%7.2fms for %7i triangles ", buildTimeAVX * 1000.0f, verts / 3 );
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
+
 #endif
 #endif
 
-#ifdef BUILD_AVX
-#ifdef BVH_USEAVX
+#ifdef BUILD_SBVH
+
 	// measure single-core bvh construction time - AVX builder
 	printf( "- HQ (SBVH) builder: " );
 	t.reset();
@@ -185,7 +188,7 @@ int main()
 	float buildTimeHQ = t.elapsed() / 3.0f;
 	printf( "%7.2fms for %7i triangles ", buildTimeHQ * 1000.0f, verts / 3 );
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
-#endif
+
 #endif
 
 #if defined EMBREE_BUILD || defined EMBREE_TRAVERSE

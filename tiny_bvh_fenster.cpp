@@ -86,8 +86,6 @@ void Init()
 	// build a BVH over the scene
 #if defined(BVH_USEAVX)
 	bvh.BuildAVX( triangles, verts / 3 );
-	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH8 );
-	bvh.Convert( BVH::BASIC_BVH8, BVH::CWBVH );
 #else
 	// bvh.Build( triangles, verts / 3 );
 #endif
