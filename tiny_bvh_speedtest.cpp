@@ -339,7 +339,7 @@ int main()
 	t.reset();
 	bvh.Optimize( 1000000 );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
-	printf( "done (%.2fs). New SAH=%.2f\n", t.elapsed(), bvh.SAHCost() );
+	printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
 	for (int i = 0; i < N; i += 2) bvh.Intersect( rays[i], BVH::ALT_SOA ); // re-warm
 	printf( "- CPU, coherent,   2-way optimized,    ST: " );
 	t.reset();

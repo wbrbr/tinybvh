@@ -141,7 +141,7 @@ void Tick( uint32_t* buf )
 		rays[i].hit.prim = rayhit.hit.primID, rays[i].hit.t = rayhit.ray.tfar;
 	}
 #else
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::CWBVH );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 #endif
 
 	// visualize result

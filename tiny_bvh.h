@@ -77,10 +77,13 @@ THE SOFTWARE.
 #define BVH_USEAVX
 #endif
 
+// optimizer setting
+// #define FULLSPLITOPTIMIZE	// enable to optimize a single-leaf BVH. Doesn't seem to help.
+
 // library version
 #define TINY_BVH_VERSION_MAJOR	0
 #define TINY_BVH_VERSION_MINOR	7
-#define TINY_BVH_VERSION_SUB	5
+#define TINY_BVH_VERSION_SUB	6
 
 // ============================================================================
 //
@@ -89,16 +92,18 @@ THE SOFTWARE.
 // ============================================================================
 
 // aligned memory allocation
-#ifdef _MSC_VER
-// Visual Studio / C11
+// note: formally size needs to be a multiple of 'alignment'.
+// see https://en.cppreference.com/w/c/memory/aligned_alloc
+// EMSCRIPTEN enforces this.
+#define MAKE_MULIPLE_64( x ) ( ( ( x ) + 63 ) & ( ~0x3f ) )
+#ifdef _MSC_VER // Visual Studio / C11
 #include <malloc.h>
 #include <math.h> // for sqrtf, fabs
 #include <string.h> // for memset
 #define ALIGNED( x ) __declspec( align( x ) )
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( x ), 64 ) )
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( MAKE_MULIPLE_64( x ) ), 64 ) )
 #define ALIGNED_FREE( x ) _aligned_free( x )
-#elif defined(__EMSCRIPTEN__)
-// EMSCRIPTEN (needs to be before gcc and clang to avoid misdetection) 
+#elif defined(__EMSCRIPTEN__) // EMSCRIPTEN - needs to be before gcc and clang to avoid misdetection
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
@@ -109,29 +114,23 @@ THE SOFTWARE.
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
 #define ALIGNED_FREE( x ) _mm_free( x )
 #else
-// Size needs to be a multiple of Alignment in the standard (in EMSCRIPTEN this is enforced)
-// See https://en.cppreference.com/w/c/memory/aligned_alloc
-#define MAKE_MULIPLE_64( x ) ( ( ( x ) + 63 ) & ( ~0x3f ) )
 #define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, MAKE_MULIPLE_64( x ) ) )
 #define ALIGNED_FREE( x ) free( x )
 #endif
-#else
-// gcc / clang
+#else // gcc / clang
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
 #if defined(__x86_64__) || defined(_M_X64)
-// https://stackoverflow.com/questions/32612881/why-use-mm-malloc-as-opposed-to-aligned-malloc-alligned-alloc-or-posix-mem
 #include <xmmintrin.h>
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( MAKE_MULIPLE_64( x ) ), 64 ) )
 #define ALIGNED_FREE( x ) _mm_free( x )
 #else
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, ( x ) ) )
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, ( MAKE_MULIPLE_64( x ) ) ) )
 #define ALIGNED_FREE( x ) free( x )
 #endif
 #endif
-// generic
 #ifdef BVH_USEAVX
 #include "immintrin.h" // for __m128 and __m256
 #endif
@@ -455,31 +454,22 @@ public:
 		float cost = 3.0f * n.SurfaceArea() + SAHCost( n.leftFirst ) + SAHCost( n.leftFirst + 1 );
 		return nodeIdx == 0 ? (cost / n.SurfaceArea()) : cost;
 	}
-	int NodeCount( const unsigned nodeIdx = 0 ) const
-	{
-		// Determine the number of nodes in the tree. Typically the result should
-		// be usedBVHNodes - 1 (second node is always unused), but some builders may 
-		// have unused nodes besides node 1.
-		// TODO: Implement for other layouts.
-		const BVHNode& n = bvhNode[nodeIdx];
-		unsigned retVal = 1;
-		if (!n.isLeaf()) retVal += NodeCount( n.leftFirst ) + NodeCount( n.leftFirst + 1 );
-		return retVal;
-	}
+	int NodeCount( BVHLayout layout ) const;
 	int PrimCount( const unsigned nodeIdx = 0 ) const
 	{
 		// Determine the total number of primitives / fragments in leaf nodes.
 		const BVHNode& n = bvhNode[nodeIdx];
 		return n.isLeaf() ? n.triCount : (PrimCount( n.leftFirst ) + PrimCount( n.leftFirst + 1 ));
 	}
+	void Compact( const BVHLayout layout /* must be WALD_32BYTE or VERBOSE */ );
 	void Build( const bvhvec4* vertices, const unsigned primCount );
 	void BuildHQ( const bvhvec4* vertices, const unsigned primCount );
 	void BuildAVX( const bvhvec4* vertices, const unsigned primCount );
 	void Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal = false );
-	void SplitLeafs();
-	void MergeLeafs();
-	void Optimize( const unsigned iterations, const bool convertBack = true );
-	void Refit();
+	void SplitLeafs(); // operates on VERBOSE layout
+	void MergeLeafs(); // operates on VERBOSE layout
+	void Optimize( const unsigned iterations, const bool convertBack = true ); // operates on VERBOSE
+	void Refit(); // operates on WALD_32BYTE
 	int Intersect( Ray& ray, BVHLayout layout = WALD_32BYTE ) const;
 	void Intersect256Rays( Ray* first ) const;
 	void Intersect256RaysSSE( Ray* packet ) const; // requires BVH_USEAVX
@@ -506,10 +496,10 @@ private:
 	void MergeSubtree( const unsigned nodeIdx, unsigned* newIdx, unsigned& newIdxPtr );
 public:
 	bvhvec4* verts = 0;				// pointer to input primitive array: 3x16 bytes per tri
-	unsigned triCount = 0;		// number of primitives in tris
+	unsigned triCount = 0;			// number of primitives in tris
 	Fragment* fragment = 0;			// input primitive bounding boxes
-	unsigned* triIdx = 0;		// primitive index array
-	unsigned idxCount = 0;		// number of indices in triIdx. May exceed triCount * 3 for SBVH.
+	unsigned* triIdx = 0;			// primitive index array
+	unsigned idxCount = 0;			// number of indices in triIdx. May exceed triCount * 3 for SBVH.
 	BVHNode* bvhNode = 0;			// BVH node pool, Wald 32-byte format. Root is always in node 0.
 	BVHNodeAlt* altNode = 0;		// BVH node in Aila & Laine format.
 	BVHNodeAlt2* alt2Node = 0;		// BVH node in Aila & Laine (SoA version) format.
@@ -521,7 +511,8 @@ public:
 	bvhvec4* bvh8Tris = 0;			// Triangle data for CWBVH nodes.
 	bool rebuildable = true;		// Rebuilds are safe only if a tree has not been converted.
 	bool refittable = true;			// Refits are safe only if the tree has no spatial splits.
-	bool fragminFlipped = false;	// AVX builders flip aabb min.
+	bool frag_min_flipped = false;	// AVX builders flip aabb min.
+	bool may_have_holes = false;	// Threaded builds and MergeLeafs produce BVHs with unused nodes.
 	// keep track of allocated buffer size to avoid 
 	// repeated allocation during layout conversion.
 	unsigned allocatedBVHNodes = 0;
@@ -681,7 +672,8 @@ void BVH::Build( const bvhvec4* vertices, const unsigned primCount )
 	}
 	// all done.
 	refittable = true; // not using spatial splits: can refit this BVH
-	fragminFlipped = false; // did not use AVX for binning
+	frag_min_flipped = false; // did not use AVX for binning
+	may_have_holes = false; // the reference builder produces a continuous list of nodes
 	usedBVHNodes = newNodePtr;
 }
 
@@ -917,7 +909,8 @@ void BVH::BuildHQ( const bvhvec4* vertices, const unsigned primCount )
 	// Compact(); - TODO
 	// all done.
 	refittable = false; // can't refit an SBVH
-	fragminFlipped = false; // did not use AVX for binning
+	frag_min_flipped = false; // did not use AVX for binning
+	may_have_holes = false; // there may be holes in the index list, but not in the node list
 	usedBVHNodes = newNodePtr;
 }
 
@@ -1504,12 +1497,36 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 	rebuildable = false; // hard to guarantee safe rebuilds after a layout conversion.
 }
 
+int BVH::NodeCount( BVHLayout layout ) const
+{
+	// Determine the number of nodes in the tree. Typically the result should
+	// be usedBVHNodes - 1 (second node is always unused), but some builders may 
+	// have unused nodes besides node 1. TODO: Support more layouts.
+	unsigned retVal = 0, nodeIdx = 0, stack[64], stackPtr = 0;
+	if (layout == WALD_32BYTE) while (1)
+	{
+		const BVHNode& n = bvhNode[nodeIdx];
+		retVal++;
+		if (n.isLeaf()) { if (stackPtr == 0) break; else nodeIdx = stack[--stackPtr]; }
+		else nodeIdx = n.leftFirst, stack[stackPtr++] = n.leftFirst + 1;
+	}
+	else if (layout == VERBOSE) while (1)
+	{
+		const BVHNodeVerbose& n = verbose[nodeIdx];
+		retVal++;
+		if (n.isLeaf()) { if (stackPtr == 0) break; else nodeIdx = stack[--stackPtr]; }
+		else nodeIdx = n.left, stack[stackPtr++] = n.right;
+	}
+	return retVal;
+}
+
 // Refitting: For animated meshes, where the topology remains intact. This
 // includes trees waving in the wind, or subsequent frames for skinned
 // animations. Repeated refitting tends to lead to deteriorated BVHs and
 // slower ray tracing. Rebuild when this happens.
 void BVH::Refit()
 {
+	assert( refittable );
 	for (int i = usedBVHNodes - 1; i >= 0; i--)
 	{
 		BVHNode& node = bvhNode[i];
@@ -1533,6 +1550,65 @@ void BVH::Refit()
 	}
 }
 
+// Compact: Reduce the size of a BVH by removing any unsed nodes.
+// This is useful after an SBVH build or multi-threaded build, but also after
+// calling MergeLeafs. Some operations, such as Optimize, *require* a
+// compacted tree to work correctly.
+void BVH::Compact( const BVHLayout layout )
+{
+	if (layout == WALD_32BYTE)
+	{
+		BVHNode* tmp = (BVHNode*)ALIGNED_MALLOC( sizeof( BVHNode ) * usedBVHNodes );
+		memcpy( tmp, bvhNode, 2 * sizeof( BVHNode ) );
+		unsigned newNodePtr = 2, nodeIdx = 0, stack[64], stackPtr = 0;
+		while (1)
+		{
+			BVHNode& node = tmp[nodeIdx];
+			const BVHNode& left = bvhNode[node.leftFirst];
+			const BVHNode& right = bvhNode[node.leftFirst + 1];
+			tmp[newNodePtr] = left, tmp[newNodePtr + 1] = right;
+			const unsigned todo1 = newNodePtr, todo2 = newNodePtr + 1;
+			node.leftFirst = newNodePtr, newNodePtr += 2;
+			if (!left.isLeaf()) stack[stackPtr++] = todo1;
+			if (!right.isLeaf()) stack[stackPtr++] = todo2;
+			if (!stackPtr) break;
+			nodeIdx = stack[--stackPtr];
+		}
+		usedBVHNodes = newNodePtr;
+		ALIGNED_FREE( bvhNode );
+		bvhNode = tmp;
+	}
+	else if (layout == VERBOSE)
+	{
+		// Same algorithm but different data.
+		// Note that compacting a 'verbose' BVH has the side effect that
+		// left and right children are stored consecutively.
+		BVHNodeVerbose* tmp = (BVHNodeVerbose*)ALIGNED_MALLOC( sizeof( BVHNodeVerbose ) * usedVerboseNodes );
+		memcpy( tmp, verbose, 2 * sizeof( BVHNodeVerbose ) );
+		unsigned newNodePtr = 2, nodeIdx = 0, stack[64], stackPtr = 0;
+		while (1)
+		{
+			BVHNodeVerbose& node = tmp[nodeIdx];
+			const BVHNodeVerbose& left = verbose[node.left];
+			const BVHNodeVerbose& right = verbose[node.right];
+			tmp[newNodePtr] = left, tmp[newNodePtr + 1] = right;
+			const unsigned todo1 = newNodePtr, todo2 = newNodePtr + 1;
+			node.left = newNodePtr++, node.right = newNodePtr++;
+			if (!left.isLeaf()) stack[stackPtr++] = todo1;
+			if (!right.isLeaf()) stack[stackPtr++] = todo2;
+			if (!stackPtr) break;
+			nodeIdx = stack[--stackPtr];
+		}
+		usedVerboseNodes = newNodePtr;
+		ALIGNED_FREE( verbose );
+		verbose = tmp;
+	}
+	else
+	{
+		assert( false );
+	}
+}
+
 // Single-primitive leafs: Prepare the BVH for optimization. While it is not strictly
 // necessary to have a single primitive per leaf, it will yield a slightly better
 // optimized BVH. The leafs of the optimized BVH should be collapsed ('MergeLeafs')
@@ -1540,7 +1616,7 @@ void BVH::Refit()
 void BVH::SplitLeafs()
 {
 	unsigned nodeIdx = 0, stack[64], stackPtr = 0;
-	float fragMinFix = fragminFlipped ? -1.0f : 1.0f;
+	float fragMinFix = frag_min_flipped ? -1.0f : 1.0f;
 	while (1)
 	{
 		BVHNodeVerbose& node = verbose[nodeIdx];
@@ -1613,7 +1689,7 @@ void BVH::MergeLeafs()
 			float Ckeepsplit =
 				SA( left.aabbMin, left.aabbMax ) * leftCount +
 				SA( right.aabbMin, right.aabbMax ) * rightCount;
-			if (Cunsplit < Ckeepsplit)
+			if (Cunsplit <= Ckeepsplit)
 			{
 				// collapse the subtree
 				unsigned start = newIdxPtr;
@@ -1637,6 +1713,7 @@ void BVH::MergeLeafs()
 	ALIGNED_FREE( subtreeTriCount );
 	ALIGNED_FREE( triIdx );
 	triIdx = newIdx;
+	may_have_holes = true; // all over the place, in fact
 }
 
 // Determine for each node in the tree the number of primitives
@@ -1676,8 +1753,9 @@ void BVH::Optimize( const unsigned iterations, const bool convertBack )
 	// Suggested iteration count: ~1M for best results.
 	// TODO: Implement Section 3.4 of the paper to speed up the process.
 	if (!verbose) Convert( WALD_32BYTE, VERBOSE );
-	// SplitLeafs();
-	// Now also needs to be compacted... TODO.
+#ifdef FULLSPLITOPTIMIZE
+	SplitLeafs();
+#endif
 	for (unsigned i = 0; i < iterations; i++)
 	{
 		unsigned Nid, valid = 0;
@@ -1702,8 +1780,12 @@ void BVH::Optimize( const unsigned iterations, const bool convertBack )
 		ReinsertNodeVerbose( L, Pid, X1 );
 		ReinsertNodeVerbose( R, Nid, X1 );
 	}
+	// Collapse leaf subtrees where apppropriate
+#ifdef FULLSPLITOPTIMIZE
+	MergeLeafs();
+	Compact( VERBOSE );
+#endif
 	// Copy back to WALD_32BYTE layout
-	// MergeLeafs();
 	if (convertBack) Convert( VERBOSE, WALD_32BYTE );
 }
 
@@ -2451,7 +2533,8 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned primCount )
 	}
 	// all done.
 	refittable = true; // not using spatial splits: can refit this BVH
-	fragminFlipped = true; // AVX was used for binning; fragment.min flipped
+	frag_min_flipped = true; // AVX was used for binning; fragment.min flipped
+	may_have_holes = false; // the AVX builder produces a continuous list of nodes
 	usedBVHNodes = newNodePtr;
 }
 #if defined(_MSC_VER)
