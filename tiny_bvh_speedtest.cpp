@@ -177,6 +177,17 @@ int main()
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 
 #endif
+#ifdef BVH_USENEON
+
+    // measure single-core bvh construction time - NEON builder
+    printf( "- fast NEON builder: " );
+    t.reset();
+    for (int pass = 0; pass < 3; pass++) bvh.BuildNEON( triangles, verts / 3 );
+    float buildTimeNEON = t.elapsed() / 3.0f;
+    printf( "%7.2fms for %7i triangles ", buildTimeNEON * 1000.0f, verts / 3 );
+    printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
+
+#endif
 #endif
 
 #ifdef BUILD_SBVH
