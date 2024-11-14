@@ -21,6 +21,7 @@
 // tests to perform
 #define BUILD_REFERENCE
 #define BUILD_AVX
+#define BUILD_NEON
 #define BUILD_SBVH
 #define TRAVERSE_2WAY_ST
 #define TRAVERSE_ALT2WAY_ST
@@ -177,6 +178,9 @@ int main()
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 
 #endif
+#endif
+
+#ifdef BUILD_NEON
 #ifdef BVH_USENEON
 
     // measure single-core bvh construction time - NEON builder
