@@ -31,10 +31,11 @@ The **performance measurement tool** use OpenMP and can be compiled with:
 
 ````g++ -std=c++20 -mavx -Ofast -fopenmp tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
-# Version 0.7.6
+# Version 0.8.0
 This version of the library includes the following functionality:
 * Binned SAH BVH builder
 * Fast binned SAH BVH builder using AVX intrinsics
+* Fast binned SAH BVH builder using NEON intrinsices, by [wuyakuma](https://github.com/wuyakuma)
 * Spatial Splits (SBVH) builder
 * 'Compressed Wide BVH' (CWBVH) data structure
 * BVH optimizer: reduces SAH cost and improves ray tracing performance
