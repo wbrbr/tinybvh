@@ -10,7 +10,7 @@
 #define LOADSPONZA
 
 // GPU ray tracing
-#define ENABLE_OPENCL
+// #define ENABLE_OPENCL
 
 // tests to perform
 #define BUILD_REFERENCE
@@ -71,7 +71,7 @@ void embreeError( void* userPtr, enum RTCError error, const char* str )
 #endif
 
 #ifdef ENABLE_OPENCL
-#define CL_TARGET_OPENCL_VERSION 300
+#define TINY_OCL_IMPLEMENTATION
 #include "tiny_ocl.h"
 #endif
 
