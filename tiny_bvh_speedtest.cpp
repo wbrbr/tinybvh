@@ -1,20 +1,5 @@
 #define TINYBVH_IMPLEMENTATION
 #include "tiny_bvh.h"
-#ifdef _MSC_VER
-#include "stdio.h"		// for printf
-#include "stdlib.h"		// for rand
-#else
-#include <cstdio>
-#endif
-#ifdef _WIN32
-#include <intrin.h>		// for __cpuidex
-#endif
-#if defined(__GNUC__) && defined(__x86_64__)
-#include <cpuid.h>
-#endif
-#ifdef __EMSCRIPTEN__ 
-#include <emscripten/version.h> // for __EMSCRIPTEN_major__, __EMSCRIPTEN_minor__
-#endif
 
 // 'screen resolution': see tiny_bvh_fenster.cpp; this program traces the
 // same rays, but without visualization - just performance statistics.
@@ -48,6 +33,24 @@
 #define GPU_CWBVH
 
 using namespace tinybvh;
+
+#ifdef _MSC_VER
+#include "stdio.h"		// for printf
+#include "stdlib.h"		// for rand
+#else
+#include <cstdio>
+#endif
+#ifdef _WIN32
+#include <intrin.h>		// for __cpuidex
+#elif defined ENABLE_OPENCL
+#undef ENABLE_OPENCL
+#endif
+#if defined(__GNUC__) && defined(__x86_64__)
+#include <cpuid.h>
+#endif
+#ifdef __EMSCRIPTEN__ 
+#include <emscripten/version.h> // for __EMSCRIPTEN_major__, __EMSCRIPTEN_minor__
+#endif
 
 #ifdef LOADSPONZA
 bvhvec4* triangles = 0;
