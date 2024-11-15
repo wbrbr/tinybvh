@@ -33,7 +33,7 @@ The **performance measurement tool** use OpenMP and can be compiled with:
 
 ````g++ -std=c++20 -mavx -Ofast -fopenmp tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
-# Version 0.8.0
+# Version 0.8.1
 This version of the library includes the following functionality:
 * Binned SAH BVH builder
 * Fast binned SAH BVH builder using AVX intrinsics
@@ -51,7 +51,7 @@ The current version of the library is rapidly gaining functionality. Please expe
 Plans:
 
 * BVH::Optimize:
-  * Properly use C_trav and C_int for SAH
+  * Properly use C_trav and C_int for SAH **_(done)_**
   * Faster Optimize algorithm (complete paper implementation)
   * Understanding optimized SBVH performance
 * CPU single-ray performance
