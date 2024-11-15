@@ -18,24 +18,32 @@
 #define SCRWIDTH	800
 #define SCRHEIGHT	600
 
+// scene selection
+#define LOADSPONZA
+
 // tests to perform
-// #define BUILD_REFERENCE
+#define BUILD_REFERENCE
 #define BUILD_AVX
 #define BUILD_NEON
-// #define BUILD_SBVH
+#define BUILD_SBVH
 #define TRAVERSE_2WAY_ST
 #define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_SOA2WAY_ST
-// #define TRAVERSE_2WAY_MT
-// #define TRAVERSE_2WAY_MT_PACKET
-// #define TRAVERSE_2WAY_MT_DIVERGENT
-// #define TRAVERSE_OPTIMIZED_ST
+#define TRAVERSE_2WAY_MT
+#define TRAVERSE_2WAY_MT_PACKET
+#define TRAVERSE_2WAY_MT_DIVERGENT
+#define TRAVERSE_OPTIMIZED_ST
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
 
 using namespace tinybvh;
 
-bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
+#ifdef LOADSPONZA
+bvhvec4* triangles = 0;
+#include <fstream>
+#else
+ALIGNED( 16 ) bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
+#endif
 int verts = 0;
 BVH bvh;
 
@@ -87,38 +95,6 @@ void sphere_flake( float x, float y, float z, float s, int d = 0 )
 
 int main()
 {
-	// generate a sphere flake scene
-	sphere_flake( 0, 0, 0, 1.5f );
-
-	// setup view pyramid for a pinhole camera: 
-	// eye, p1 (top-left), p2 (top-right) and p3 (bottom-left)
-	bvhvec3 eye( -3.5f, -1.5f, -6.5f ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
-	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
-	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
-	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
-
-	// generate primary rays in a cacheline-aligned buffer - and, for data locality:
-	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
-	int N = 0;
-	Ray* rays = (Ray*)ALIGNED_MALLOC( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
-	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
-	{
-		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
-		{
-			int pixel_x = tx * 4 + x;
-			int pixel_y = ty * 4 + y;
-			for (int s = 0; s < 16; s++) // 16 samples per pixel
-			{
-				float u = (float)(pixel_x * 4 + (s & 3)) / (SCRWIDTH * 4);
-				float v = (float)(pixel_y * 4 + (s >> 2)) / (SCRHEIGHT * 4);
-				bvhvec3 P = p1 + u * (p2 - p1) + v * (p3 - p1);
-				rays[N++] = Ray( eye, normalize( P - eye ) );
-			}
-		}
-	}
-
-	//  T I N Y _ B V H   P E R F O R M A N C E   M E A S U R E M E N T S
-
 	int minor = TINY_BVH_VERSION_MINOR;
 	int major = TINY_BVH_VERSION_MAJOR;
 	int sub = TINY_BVH_VERSION_SUB;
@@ -146,13 +122,68 @@ int main()
 #endif
 	printf( "----------------------------------------------------------------\n" );
 
+	#ifdef LOADSPONZA
+	// load raw vertex data for Crytek's Sponza
+	std::string filename{ "../testdata/cryteksponza.bin" };
+	std::fstream s{ filename, s.binary | s.in };
+	if (!s.is_open())
+	{
+		// try again, look in .\testdata
+		filename = std::string{ "./testdata/cryteksponza.bin" };
+		s = std::fstream{ filename, s.binary | s.in };
+		assert( s.is_open() );
+	}
+	s.seekp( 0 );
+	s.read( (char*)&verts, 4 );
+	printf( "Loading triangle data (%i tris).\n", verts );
+	verts *= 3, triangles = (bvhvec4*)ALIGNED_MALLOC( verts * 16 );
+	s.read( (char*)triangles, verts * 16 );
+#else
+	// generate a sphere flake scene
+	printf( "Creating sphere flake (%i tris).\n", verts / 3 );
+	sphere_flake( 0, 0, 0, 1.5f );
+#endif
+
+	// setup view pyramid for a pinhole camera: 
+	// eye, p1 (top-left), p2 (top-right) and p3 (bottom-left)
+#ifdef LOADSPONZA
+	bvhvec3 eye( 0, 30, 0 ), view = normalize( bvhvec3( -8, 2, -1.7f ) );
+#else
+	bvhvec3 eye( -3.5f, -1.5f, -6.5f ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
+#endif
+	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
+	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
+	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
+
+	// generate primary rays in a cacheline-aligned buffer - and, for data locality:
+	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
+	int N = 0;
+	Ray* rays = (Ray*)ALIGNED_MALLOC( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
+	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
+	{
+		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
+		{
+			int pixel_x = tx * 4 + x;
+			int pixel_y = ty * 4 + y;
+			for (int s = 0; s < 16; s++) // 16 samples per pixel
+			{
+				float u = (float)(pixel_x * 4 + (s & 3)) / (SCRWIDTH * 4);
+				float v = (float)(pixel_y * 4 + (s >> 2)) / (SCRHEIGHT * 4);
+				bvhvec3 P = p1 + u * (p2 - p1) + v * (p3 - p1);
+				rays[N++] = Ray( eye, normalize( P - eye ) );
+			}
+		}
+	}
+
+	//  T I N Y _ B V H   P E R F O R M A N C E   M E A S U R E M E N T S
+
 	Timer t;
 	float mrays;
 
 	// measure single-core bvh construction time - warming caches
 	printf( "BVH construction speed\n" );
 	printf( "warming caches...\n" );
-	bvh.Build( (bvhvec4*)triangles, verts / 3 );
+	bvh.Build( triangles, verts / 3 );
 
 #ifdef BUILD_REFERENCE
 

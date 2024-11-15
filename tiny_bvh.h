@@ -73,9 +73,9 @@ THE SOFTWARE.
 #define BVHBINS 8
 
 // SAH BVH building: Heuristic parameters
-// CPU builds: C_INT = 1, C_TRAV = 0.001 seems optimal.
+// CPU builds: C_INT = 1, C_TRAV = 0.01 seems optimal.
 #define C_INT	1
-#define C_TRAV	0.001f
+#define C_TRAV	0.01f
 
 // include fast AVX BVH builder
 #if defined(__x86_64__) || defined(_M_X64) || defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
@@ -1080,7 +1080,7 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 	else if (from == WALD_32BYTE && to == VERBOSE)
 	{
 		// allocate space
-		unsigned spaceNeeded = triCount * 2; // this one needs space to grow to 2N
+		unsigned spaceNeeded = triCount * (refittable ? 2 : 3); // this one needs space to grow to 2N
 		if (allocatedVerbose < spaceNeeded)
 		{
 			ALIGNED_FREE( verbose );
@@ -2495,14 +2495,13 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned primCount )
 			for (unsigned i = 0; i < node.triCount - 1; i++)
 			{
 				unsigned fid = *ti++;
+			#if defined __GNUC__ || _MSC_VER < 1920
+				if (fid > triCount) fid = triCount - 1; // never happens but g++ *and* vs2017 need this to not crash...
+			#endif
 				const __m256 b0 = binbox[i0], b1 = binbox[BVHBINS + i1], b2 = binbox[2 * BVHBINS + i2];
 				const __m128 fmin = frag4[fid].bmin4, fmax = frag4[fid].bmax4;
 				r0 = _mm256_max_ps( b0, f ), r1 = _mm256_max_ps( b1, f ), r2 = _mm256_max_ps( b2, f );
 				const __m128i b4 = _mm_cvtps_epi32( _mm_sub_ps( _mm_mul_ps( _mm_sub_ps( _mm_sub_ps( fmax, fmin ), nmin4 ), rpd4 ), half4 ) );
-			#if _MSC_VER < 1920 
-				// VS2017 needs a random check on fid to produce correct code... The condition is never true. 
-				if (fid > triCount) fid = triCount - 1;
-			#endif
 				f = frag8[fid], count[0][i0]++, count[1][i1]++, count[2][i2]++;
 				binbox[i0] = r0, i0 = ILANE( b4, 0 );
 				binbox[BVHBINS + i1] = r1, i1 = ILANE( b4, 1 );

@@ -20,9 +20,10 @@ BVH bvh;
 #endif
 
 #ifdef LOADSPONZA
-bvhvec4* triangles;
+bvhvec4* triangles = 0;
+#include <fstream>
 #else
-bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
+ALIGNED( 16 ) bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
 #endif
 int verts = 0;
 
@@ -52,12 +53,20 @@ void Init()
 {
 #ifdef LOADSPONZA
 	// load raw vertex data for Crytek's Sponza
-	FILE* f;
-	fopen_s( &f, "../testdata/cryteksponza.bin", "rb" );
-	fread( &verts, 1, 4, f );
-	verts *= 3, triangles = new bvhvec4[verts];
-	fread( triangles, sizeof( bvhvec4 ), verts, f );
-	fclose( f );
+	std::string filename{ "../testdata/cryteksponza.bin" };
+	std::fstream s{ filename, s.binary | s.in };
+	if (!s.is_open())
+	{
+		// try again, look in .\testdata
+		std::string filename{ "./testdata/cryteksponza.bin" };
+		s = std::fstream{ filename, s.binary | s.in };
+		assert( s.is_open() );
+	}
+	s.seekp( 0 );
+	s.read( (char*)&verts, 4 );
+	printf( "Loading triangle data (%i tris).\n", verts );
+	verts *= 3, triangles = (bvhvec4*)ALIGNED_MALLOC( verts * 16 );
+	s.read( (char*)triangles, verts * 16 );
 #else
 	// generate a sphere flake scene
 	sphere_flake( 0, 0, 0, 1.5f );
@@ -87,7 +96,7 @@ void Init()
 #if defined(BVH_USEAVX)
 	bvh.BuildAVX( triangles, verts / 3 );
 #elif defined(BVH_USENEON)
-    bvh.BuildNEON( triangles, verts / 3 );
+	bvh.BuildNEON( triangles, verts / 3 );
 #else
 	// bvh.Build( triangles, verts / 3 );
 #endif
