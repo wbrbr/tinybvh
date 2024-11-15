@@ -91,7 +91,7 @@ THE SOFTWARE.
 // library version
 #define TINY_BVH_VERSION_MAJOR	0
 #define TINY_BVH_VERSION_MINOR	8
-#define TINY_BVH_VERSION_SUB	2
+#define TINY_BVH_VERSION_SUB	3
 
 // ============================================================================
 //
@@ -356,6 +356,10 @@ public:
 		BASIC_BVH8,			// Input for CWBVH. Obtained by converting WALD_32BYTE.
 		CWBVH				// Fastest GPU rendering. Obtained by converting BASIC_BVH8.
 	};
+	enum BuildFlags {
+		NONE = 0,			// Default building behavior (binned, SAH-driven).
+		FULLSPLIT = 1		// Split as far as possible, even when SAH doesn't agree.
+	};
 	struct BVHNode
 	{
 		// 'Traditional' 32-byte BVH node layout, as proposed by Ingo Wald.
@@ -537,6 +541,7 @@ public:
 	bool refittable = true;			// Refits are safe only if the tree has no spatial splits.
 	bool frag_min_flipped = false;	// AVX builders flip aabb min.
 	bool may_have_holes = false;	// Threaded builds and MergeLeafs produce BVHs with unused nodes.
+	BuildFlags buildFlag = NONE;	// Hint to the builder.
 	// keep track of allocated buffer size to avoid 
 	// repeated allocation during layout conversion.
 	unsigned allocatedBVHNodes = 0;
@@ -1872,7 +1877,7 @@ unsigned BVH::FindBestNewPosition( const unsigned Lid )
 void BVH::ReinsertNodeVerbose( const unsigned Lid, const unsigned Nid, const unsigned origin )
 {
 	unsigned Xbest = FindBestNewPosition( Lid );
-	if (verbose[Xbest].parent == 0) Xbest = origin;
+	if (Xbest == 0 || verbose[Xbest].parent == 0) Xbest = origin;
 	const unsigned X1 = verbose[Xbest].parent;
 	BVHNodeVerbose& N = verbose[Nid];
 	N.left = Xbest, N.right = Lid;

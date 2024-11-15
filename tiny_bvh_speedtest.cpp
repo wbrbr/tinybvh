@@ -25,7 +25,7 @@
 #define BUILD_REFERENCE
 #define BUILD_AVX
 #define BUILD_NEON
-#define BUILD_SBVH
+// #define BUILD_SBVH
 #define TRAVERSE_2WAY_ST
 #define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_SOA2WAY_ST
@@ -381,19 +381,33 @@ int main()
 
 	// trace all rays three times to estimate average performance
 	// - single core version, alternative bvh layout
-	printf( "Optimizing BVH... " );
-	t.reset();
-	bvh.Optimize( 1000000 );
-	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
-	printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
-	for (int i = 0; i < N; i += 2) bvh.Intersect( rays[i], BVH::ALT_SOA ); // re-warm
-	printf( "- CPU, coherent,   2-way optimized,    ST: " );
-	t.reset();
-	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
-	float traceTimeOpt = t.elapsed() / 3.0f;
-	mrays = (float)N / traceTimeOpt;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeOpt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	printf( "Optimizing BVH, regular...   " );
+	if (bvh.refittable)
+	{
+		printf( "Currently can't optimize SBVH.\n" );
+	}
+	else
+	{
+		t.reset();
+		bvh.Optimize( 1000000 );
+		printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
+		printf( "Optimizing BVH, fullsplit... " );
+		t.reset();
+		bvh.buildFlag = BVH::FULLSPLIT;
+		bvh.Build( triangles, verts / 3 );
+		bvh.Optimize( 1000000 );
+		bvh.MergeLeafs();
+		printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
+		bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
+		for (int i = 0; i < N; i += 2) bvh.Intersect( rays[i], BVH::ALT_SOA ); // re-warm
+		printf( "- CPU, coherent,   2-way optimized,    ST: " );
+		t.reset();
+		for (int pass = 0; pass < 3; pass++)
+			for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
+		float traceTimeOpt = t.elapsed() / 3.0f;
+		mrays = (float)N / traceTimeOpt;
+		printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeOpt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	}
 
 #endif
 
