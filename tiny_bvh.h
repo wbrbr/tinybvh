@@ -72,6 +72,11 @@ THE SOFTWARE.
 // binned BVH building: bin count
 #define BVHBINS 8
 
+// SAH BVH building: Heuristic parameters
+// CPU builds: C_INT = 1, C_TRAV = 0.001 seems optimal.
+#define C_INT	1
+#define C_TRAV	0.001f
+
 // include fast AVX BVH builder
 #if defined(__x86_64__) || defined(_M_X64) || defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
 #define BVH_USEAVX
@@ -86,7 +91,7 @@ THE SOFTWARE.
 // library version
 #define TINY_BVH_VERSION_MAJOR	0
 #define TINY_BVH_VERSION_MINOR	8
-#define TINY_BVH_VERSION_SUB	0
+#define TINY_BVH_VERSION_SUB	1
 
 // ============================================================================
 //
@@ -360,7 +365,7 @@ public:
 		bool isLeaf() const { return triCount > 0; /* empty BVH leaves do not exist */ }
 		float Intersect( const Ray& ray ) const { return BVH::IntersectAABB( ray, aabbMin, aabbMax ); }
 		float SurfaceArea() const { return BVH::SA( aabbMin, aabbMax ); }
-		float CalculateNodeCost() const { return SurfaceArea() * triCount; }
+		float CalculateNodeCost() const { return SurfaceArea() * triCount * C_INT; }
 	};
 	struct BVHNodeAlt
 	{
@@ -655,7 +660,7 @@ void BVH::Build( const bvhvec4* vertices, const unsigned primCount )
 				// evaluate bin totals to find best position for object split
 				for (unsigned i = 0; i < BVHBINS - 1; i++)
 				{
-					const float C = ANL[i] + ANR[i];
+					const float C = C_TRAV + C_INT * (ANL[i] + ANR[i]);
 					if (C < splitCost)
 					{
 						splitCost = C, bestAxis = a, bestPos = i;
@@ -793,7 +798,7 @@ void BVH::BuildHQ( const bvhvec4* vertices, const unsigned primCount )
 				// evaluate bin totals to find best position for object split
 				for (unsigned i = 0; i < BVHBINS - 1; i++)
 				{
-					const float C = ANL[i] + ANR[i];
+					const float C = C_TRAV + C_INT * (ANL[i] + ANR[i]);
 					if (C < splitCost)
 					{
 						splitCost = C, bestAxis = a, bestPos = i;
@@ -855,11 +860,15 @@ void BVH::BuildHQ( const bvhvec4* vertices, const unsigned primCount )
 						ANR[BVHBINS - 2 - i] = rN == 0 ? 1e30f : ((r2 - r1).halfArea() * (float)rN);
 					}
 					// find best position for spatial split
-					for (unsigned i = 0; i < BVHBINS - 1; i++) if (ANL[i] + ANR[i] < splitCost && NL[i] + NR[i] < budget)
+					for (unsigned i = 0; i < BVHBINS - 1; i++)
 					{
-						spatial = true, splitCost = ANL[i] + ANR[i], bestAxis = a, bestPos = i;
-						bestLMin = lBMin[i], bestLMax = lBMax[i], bestRMin = rBMin[i], bestRMax = rBMax[i];
-						bestLMax[a] = bestRMin[a]; // accurate
+						const float Cspatial = C_TRAV + C_INT * (ANL[i] + ANR[i]);
+						if (Cspatial < splitCost && NL[i] + NR[i] < budget)
+						{
+							spatial = true, splitCost = Cspatial, bestAxis = a, bestPos = i;
+							bestLMin = lBMin[i], bestLMax = lBMax[i], bestRMin = rBMin[i], bestRMax = rBMax[i];
+							bestLMax[a] = bestRMin[a]; // accurate
+						}
 					}
 				}
 			}
@@ -1701,13 +1710,14 @@ void BVH::MergeLeafs()
 			const unsigned rightCount = subtreeTriCount[node.right];
 			const unsigned mergedCount = leftCount + rightCount;
 			// cost of unsplit
-			float Cunsplit = SA( node.aabbMin, node.aabbMax ) * mergedCount;
+			float Cunsplit = SA( node.aabbMin, node.aabbMax ) * mergedCount * C_INT;
 			// cost of leaving things as they are
 			BVHNodeVerbose& left = verbose[node.left];
 			BVHNodeVerbose& right = verbose[node.right];
 			float Ckeepsplit =
-				SA( left.aabbMin, left.aabbMax ) * leftCount +
-				SA( right.aabbMin, right.aabbMax ) * rightCount;
+				C_TRAV + C_INT *
+				(SA( left.aabbMin, left.aabbMax ) * leftCount +
+					SA( right.aabbMin, right.aabbMax ) * rightCount);
 			if (Cunsplit <= Ckeepsplit)
 			{
 				// collapse the subtree
@@ -2399,8 +2409,9 @@ inline float halfArea( const __m256& a /* a contains aabb itself, with min.xyz n
 #endif
 }
 #define PROCESS_PLANE( a, pos, ANLR, lN, rN, lb, rb ) if (lN * rN != 0) { \
-	ANLR = halfArea( lb ) * (float)lN + halfArea( rb ) * (float)rN; if (ANLR < splitCost) \
-	splitCost = ANLR, bestAxis = a, bestPos = pos, bestLBox = lb, bestRBox = rb; }
+	ANLR = halfArea( lb ) * (float)lN + halfArea( rb ) * (float)rN; \
+	const float C = C_TRAV + C_INT * ANLR; if (C < splitCost) \
+	splitCost = C, bestAxis = a, bestPos = pos, bestLBox = lb, bestRBox = rb; }
 #if defined(_MSC_VER)
 #pragma warning ( push )
 #pragma warning( disable:4701 ) // "potentially uninitialized local variable 'bestLBox' used"
@@ -3066,8 +3077,9 @@ inline float halfArea( const float32x4x2_t& a /* a contains aabb itself, with mi
 	return ex * ey + ey * ez + ez * ex;
 }
 #define PROCESS_PLANE( a, pos, ANLR, lN, rN, lb, rb ) if (lN * rN != 0) { \
-    ANLR = halfArea( lb ) * (float)lN + halfArea( rb ) * (float)rN; if (ANLR < splitCost) \
-    splitCost = ANLR, bestAxis = a, bestPos = pos, bestLBox = lb, bestRBox = rb; }
+	ANLR = halfArea( lb ) * (float)lN + halfArea( rb ) * (float)rN; \
+	const float C = C_TRAV + C_INT * ANLR; if (C < splitCost) \
+	splitCost = C, bestAxis = a, bestPos = pos, bestLBox = lb, bestRBox = rb; }
 
 void BVH::BuildNEON( const bvhvec4* vertices, const unsigned primCount )
 {
