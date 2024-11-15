@@ -22,12 +22,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-// Nov 13, '24: version 0.7.5 : Support for WASM with EMSCRIPTEN 
+// Nov 15, '24: version 0.8.3 : Incremental update / bugfixes.
+// Nov 14, '24: version 0.8.0 : ARM/NEON support.
+// Nov 13, '24: version 0.7.5 : Support for WASM with EMSCRIPTEN. 
 // Nov 12, '24: version 0.7.0 : CWBVH construction and traversal.
 // Nov 11, '24: version 0.5.1 : SBVH builder, BVH4_GPU traversal.
 // Nov 10, '24: version 0.4.2 : BVH4/8, gpu-friendly BVH4.
 // Nov 09, '24: version 0.4.0 : Layouts, BVH optimizer.
-// Nov 08, '24: version 0.3.0
+// Nov 08, '24: version 0.3.0 : BuildAVX in g++.
 // Oct 30, '24: version 0.1.0 : Initial release.
 // Oct 29, '24: version 0.0.1 : Establishing interface.
 //

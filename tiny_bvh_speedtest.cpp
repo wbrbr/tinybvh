@@ -24,6 +24,9 @@
 // scene selection
 #define LOADSPONZA
 
+// GPU ray tracing
+#define ENABLE_OPENCL
+
 // tests to perform
 #define BUILD_REFERENCE
 #define BUILD_AVX
@@ -38,6 +41,11 @@
 #define TRAVERSE_OPTIMIZED_ST
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
+
+// GPU rays: only if ENABLE_OPENCL is defined.
+#define GPU_2WAY
+#define GPU_4WAY
+#define GPU_CWBVH
 
 using namespace tinybvh;
 
@@ -57,6 +65,11 @@ void embreeError( void* userPtr, enum RTCError error, const char* str )
 {
 	printf( "error %d: %s\n", error, str );
 }
+#endif
+
+#ifdef ENABLE_OPENCL
+#define CL_TARGET_OPENCL_VERSION 300
+#include "tiny_ocl.h"
 #endif
 
 float uniform_rand() { return (float)rand() / (float)RAND_MAX; }
@@ -120,13 +133,13 @@ int main()
 	// determine what CPU is running the tests.
 #if (defined(__x86_64__) || defined(_M_X64)) && (defined (_WIN32) || defined(__GNUC__))
 	char model[64]{};
-	for (unsigned i = 0; i < 3; ++i) 
+	for (unsigned i = 0; i < 3; ++i)
 	{
 	#ifdef _WIN32
 		__cpuidex( (int*)(model + i * 16), i + 0x80000002, 0 );
 	#elif defined(__GNUC__)
-		__get_cpuid( i + 0x80000002, 
-			(unsigned*)model + i * 4 + 0, (unsigned*)model + i * 4 + 1, 
+		__get_cpuid( i + 0x80000002,
+			(unsigned*)model + i * 4 + 0, (unsigned*)model + i * 4 + 1,
 			(unsigned*)model + i * 4 + 2, (unsigned*)model + i * 4 + 3 );
 	#endif
 	}
