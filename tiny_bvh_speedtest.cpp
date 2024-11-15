@@ -9,6 +9,9 @@
 #ifdef _WIN32
 #include <intrin.h>		// for __cpuidex
 #endif
+#if defined(__GNUC__) && defined(__x86_64__)
+#include <cpuid.h>
+#endif
 #ifdef __EMSCRIPTEN__ 
 #include <emscripten/version.h> // for __EMSCRIPTEN_major__, __EMSCRIPTEN_minor__
 #endif
@@ -115,9 +118,15 @@ int main()
 #endif
 
 	// determine what CPU is running the tests.
+#if (defined(__x86_64__) || defined(_M_X64)) && (defined (_WIN32) || defined(__GNUC__))
+	char model[64]{};
+	for (unsigned i = 0; i < 3; ++i) {
 #ifdef _WIN32
-	char model[256]{};
-	for (unsigned i = 0; i < 3; ++i) __cpuidex( (int*)(model + i * 16), i + 0x80000002, 0 );
+		__cpuidex( (int*)(model + i * 16), i + 0x80000002, 0 );
+#elif defined(__GNUC__)
+		__get_cpuid(i + 0x80000002, (unsigned int*)(model) + i * 4 + 0, (unsigned int*)(model) + i * 4 + 1, (unsigned int*)(model) + i * 4 + 2, (unsigned int*)(model) + i * 4 + 3);
+#endif
+	}
 	printf( "running on %s\n", model );
 #endif
 	printf( "----------------------------------------------------------------\n" );
