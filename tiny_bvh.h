@@ -1527,7 +1527,6 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 		// For now all other conversions are invalid.
 		assert( false );
 	}
-	rebuildable = false; // hard to guarantee safe rebuilds after a layout conversion.
 }
 
 int BVH::NodeCount( BVHLayout layout ) const
