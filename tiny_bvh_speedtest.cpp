@@ -1,17 +1,5 @@
 #define TINYBVH_IMPLEMENTATION
 #include "tiny_bvh.h"
-#ifdef _MSC_VER
-#include "stdio.h"		// for printf
-#include "stdlib.h"		// for rand
-#else
-#include <cstdio>
-#endif
-#ifdef _WIN32
-#include <intrin.h>		// for __cpuidex
-#endif
-#ifdef __EMSCRIPTEN__ 
-#include <emscripten/version.h> // for __EMSCRIPTEN_major__, __EMSCRIPTEN_minor__
-#endif
 
 // 'screen resolution': see tiny_bvh_fenster.cpp; this program traces the
 // same rays, but without visualization - just performance statistics.
@@ -20,6 +8,9 @@
 
 // scene selection
 #define LOADSPONZA
+
+// GPU ray tracing
+// #define ENABLE_OPENCL
 
 // tests to perform
 #define BUILD_REFERENCE
@@ -36,7 +27,30 @@
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
 
+// GPU rays: only if ENABLE_OPENCL is defined.
+#define GPU_2WAY
+#define GPU_4WAY
+#define GPU_CWBVH
+
 using namespace tinybvh;
+
+#ifdef _MSC_VER
+#include "stdio.h"		// for printf
+#include "stdlib.h"		// for rand
+#else
+#include <cstdio>
+#endif
+#ifdef _WIN32
+#include <intrin.h>		// for __cpuidex
+#elif defined ENABLE_OPENCL
+#undef ENABLE_OPENCL
+#endif
+#if defined(__GNUC__) && defined(__x86_64__)
+#include <cpuid.h>
+#endif
+#ifdef __EMSCRIPTEN__ 
+#include <emscripten/version.h> // for __EMSCRIPTEN_major__, __EMSCRIPTEN_minor__
+#endif
 
 #ifdef LOADSPONZA
 bvhvec4* triangles = 0;
@@ -54,6 +68,11 @@ void embreeError( void* userPtr, enum RTCError error, const char* str )
 {
 	printf( "error %d: %s\n", error, str );
 }
+#endif
+
+#ifdef ENABLE_OPENCL
+#define TINY_OCL_IMPLEMENTATION
+#include "tiny_ocl.h"
 #endif
 
 float uniform_rand() { return (float)rand() / (float)RAND_MAX; }
@@ -115,14 +134,23 @@ int main()
 #endif
 
 	// determine what CPU is running the tests.
-#ifdef _WIN32
-	char model[256]{};
-	for (unsigned i = 0; i < 3; ++i) __cpuidex( (int*)(model + i * 16), i + 0x80000002, 0 );
+#if (defined(__x86_64__) || defined(_M_X64)) && (defined (_WIN32) || defined(__GNUC__))
+	char model[64]{};
+	for (unsigned i = 0; i < 3; ++i)
+	{
+	#ifdef _WIN32
+		__cpuidex( (int*)(model + i * 16), i + 0x80000002, 0 );
+	#elif defined(__GNUC__)
+		__get_cpuid( i + 0x80000002,
+			(unsigned*)model + i * 4 + 0, (unsigned*)model + i * 4 + 1,
+			(unsigned*)model + i * 4 + 2, (unsigned*)model + i * 4 + 3 );
+	#endif
+	}
 	printf( "running on %s\n", model );
 #endif
 	printf( "----------------------------------------------------------------\n" );
 
-	#ifdef LOADSPONZA
+#ifdef LOADSPONZA
 	// load raw vertex data for Crytek's Sponza
 	std::string filename{ "../testdata/cryteksponza.bin" };
 	std::fstream s{ filename, s.binary | s.in };
@@ -214,13 +242,13 @@ int main()
 #ifdef BUILD_NEON
 #ifdef BVH_USENEON
 
-    // measure single-core bvh construction time - NEON builder
-    printf( "- fast NEON builder: " );
-    t.reset();
-    for (int pass = 0; pass < 3; pass++) bvh.BuildNEON( triangles, verts / 3 );
-    float buildTimeNEON = t.elapsed() / 3.0f;
-    printf( "%7.2fms for %7i triangles ", buildTimeNEON * 1000.0f, verts / 3 );
-    printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
+	// measure single-core bvh construction time - NEON builder
+	printf( "- fast NEON builder: " );
+	t.reset();
+	for (int pass = 0; pass < 3; pass++) bvh.BuildNEON( triangles, verts / 3 );
+	float buildTimeNEON = t.elapsed() / 3.0f;
+	printf( "%7.2fms for %7i triangles ", buildTimeNEON * 1000.0f, verts / 3 );
+	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 
 #endif
 #endif
