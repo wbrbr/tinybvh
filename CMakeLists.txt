@@ -83,13 +83,15 @@ if (NOT MSVC)
 	target_compile_options(tiny_bvh_renderer PRIVATE ${common_cxx_flags})
 	target_link_options(tiny_bvh_renderer PRIVATE ${common_link_flags})
 
+	target_include_directories(test PRIVATE ${./external/OpenCL/inc})
+
 	# No openmp support in default compiler
 	set(tiny_bvh_speedtest_cxx_flags ${common_cxx_flags})
 	set(tiny_bvh_speedtest_link_flags ${common_link_flags})
 
 	if (NOT APPLE AND NOT EMSCRIPTEN)
-		set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags} -fopenmp -I./external/OpenCL/inc/)
-		set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -fopenmp -L./external/OpenCL/lib)
+		set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags})
+		set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags})
 	elseif (EMSCRIPTEN)
 		# Embed Sponza into the wasm to load it (in theory there are other methods, but this is the simplest)
 		# See https://emscripten.org/docs/porting/files/packaging_files.html#modifying-file-locations-in-the-virtual-file-system
