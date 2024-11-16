@@ -249,6 +249,8 @@ public:
 
 #ifdef TINY_OCL_IMPLEMENTATION
 
+#pragma comment( lib, "../external/OpenCL/lib/OpenCL.lib" )
+
 using namespace std;
 using namespace tinyocl;
 
