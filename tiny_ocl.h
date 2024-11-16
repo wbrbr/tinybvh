@@ -79,7 +79,7 @@ class Kernel
 	friend class Buffer;
 public:
 	// constructor / destructor
-	Kernel( char* file, char* entryPoint );
+	Kernel( const char* file, const char* entryPoint );
 	Kernel( cl_program& existingProgram, char* entryPoint );
 	~Kernel();
 	// get / set
@@ -550,7 +550,7 @@ void Buffer::Clear()
 
 // Kernel constructor
 // ----------------------------------------------------------------------------
-Kernel::Kernel( char* file, char* entryPoint )
+Kernel::Kernel( const char* file, const char* entryPoint )
 {
 	if (!clStarted) InitCL();
 	// see if we have seen this source file before

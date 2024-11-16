@@ -14,9 +14,9 @@
 
 // tests to perform
 #define BUILD_REFERENCE
-#define BUILD_AVX
+// #define BUILD_AVX
 #define BUILD_NEON
-// #define BUILD_SBVH
+#define BUILD_SBVH
 #define TRAVERSE_2WAY_ST
 #define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_SOA2WAY_ST
@@ -321,6 +321,32 @@ int main()
 	float traceTimeAlt = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeAlt;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
+
+#ifdef GPU_2WAY
+
+	// trace the rays on GPU using OpenCL
+	printf( "- CPU, coherent,   alt 2-way layout,   ST: " );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::AILA_LAINE );
+	// load and compile the OpenCL kernel code
+	tinyocl::Kernel kernel( "traverse.cl", "traverse" );
+	// create an OpenCL buffer for the BVH nodes calculated by tiny_bvh.h
+	tinyocl::Buffer gpuNodes( bvh.usedBVHNodes * sizeof( BVH::BVHNodeAlt ) );
+	// copy the data to the host-side version of the buffer
+	memcpy( gpuNodes.GetHostPtr(), bvh.altNode, bvh.usedBVHNodes * sizeof( BVH::BVHNodeAlt ) );
+	// synchronize the host-side buffer to the gpu side
+	gpuNodes.CopyToDevice();
+	// start timer and start kernel on gpu
+	t.reset();
+	for (int pass = 0; pass < 3; pass++)
+	{
+		kernel.SetArguments( &gpuNodes );
+		kernel.Run( 32 ); // for now, todo.
+	}
+	float traceTimeGPU = t.elapsed() / 3.0f;
+	mrays = (float)N / traceTimeGPU;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
