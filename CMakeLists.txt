@@ -39,6 +39,8 @@ if (NOT EMSCRIPTEN)
 endif()
 
 target_include_directories(tiny_bvh_speedtest PRIVATE ${CMAKE_CURRENT_LIST_DIR}/external/OpenCL/inc)
+target_link_directories(tiny_bvh_speedtest PRIVATE ${CMAKE_CURRENT_LIST_DIR}/external/OpenCL/lib)
+
 
 if (NOT MSVC)
 	# Produce debug symbols and set optimization level
@@ -121,8 +123,6 @@ if (NOT MSVC)
 	endif()
 	target_compile_options(tiny_bvh_speedtest PRIVATE ${tiny_bvh_speedtest_cxx_flags})
 	target_link_options(tiny_bvh_speedtest PRIVATE ${tiny_bvh_speedtest_link_flags})
-
-	target_link_directories(tiny_bvh_speedtest PRIVATE ${CMAKE_CURRENT_LIST_DIR}/external/OpenCL/lib)
 	
 	if (TARGET tiny_bvh_fenster)
 		# Not all platforms support all targets. E. g.:
