@@ -324,6 +324,8 @@ int main()
 
 #endif
 
+#ifdef ENABLE_OPENCL
+
 #ifdef GPU_2WAY
 
 	// trace the rays on GPU using OpenCL
@@ -347,6 +349,8 @@ int main()
 	float traceTimeGPU = t.elapsed() / 3.0f;
 	mrays = (float)N / traceTimeGPU;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
 
 #endif
 
