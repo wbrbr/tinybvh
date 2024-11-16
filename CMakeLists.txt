@@ -91,6 +91,10 @@ if (NOT MSVC)
 		set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags} -fopenmp)
 		set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -fopenmp)
 	elseif (EMSCRIPTEN)
+		# Embed Sponza into the wasm to load it (in theory there are other methods, but this is the simplest)
+		# See https://emscripten.org/docs/porting/files/packaging_files.html#modifying-file-locations-in-the-virtual-file-system
+		set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} --preload-file "${CMAKE_CURRENT_LIST_DIR}/testdata@/testdata")
+
 		if (emcc_threads)
 			set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags} -pthread)
 			set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -pthread -sUSE_PTHREADS=1 -sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency)
