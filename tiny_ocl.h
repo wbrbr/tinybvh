@@ -34,6 +34,7 @@ THE SOFTWARE.
 #define TINY_OCL_H_
 
 #define CL_TARGET_OPENCL_VERSION 300
+#include "cl.h"
 #include <vector>
 
 namespace tinyocl {
