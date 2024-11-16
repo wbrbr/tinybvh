@@ -253,6 +253,13 @@ using namespace std;
 using namespace tinyocl;
 
 #include <stdarg.h>
+#ifdef _MSC_VER
+#include <direct.h>
+#define getcwd _getcwd
+#define chdir _chdir
+#else
+#include <unistd.h>
+#endif
 
 // source file information
 static int sourceFiles = 0;
@@ -269,6 +276,22 @@ void FatalError( const char* fmt, ... )
 	va_end( args );
 	fprintf( stderr, t );
 	while (1) exit( 0 );
+}
+
+static string TextFileRead( const char* _File )
+{
+	ifstream s( _File );
+	string str( (istreambuf_iterator<char>( s )), istreambuf_iterator<char>() );
+	s.close();
+	return str;
+}
+
+int LineCount( const string s )
+{
+	const char* p = s.c_str();
+	int lines = 0;
+	while (*p) if (*p++ == '\n') lines++;
+	return lines;
 }
 
 // CHECKCL method
