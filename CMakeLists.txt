@@ -83,8 +83,6 @@ if (NOT MSVC)
 	target_compile_options(tiny_bvh_renderer PRIVATE ${common_cxx_flags})
 	target_link_options(tiny_bvh_renderer PRIVATE ${common_link_flags})
 
-	target_include_directories(tiny_bvh_speedtest PRIVATE ${${CMAKE_CURRENT_LIST_DIR}/external/OpenCL/inc/})
-
 	# No openmp support in default compiler
 	set(tiny_bvh_speedtest_cxx_flags ${common_cxx_flags})
 	set(tiny_bvh_speedtest_link_flags ${common_link_flags})
@@ -121,6 +119,7 @@ if (NOT MSVC)
 	endif()
 	target_compile_options(tiny_bvh_speedtest PRIVATE ${tiny_bvh_speedtest_cxx_flags})
 	target_link_options(tiny_bvh_speedtest PRIVATE ${tiny_bvh_speedtest_link_flags})
+	target_include_directories(tiny_bvh_speedtest PRIVATE ${${CMAKE_CURRENT_LIST_DIR}/external/OpenCL/inc})
 
 	if (TARGET tiny_bvh_fenster)
 		# Not all platforms support all targets. E. g.:
