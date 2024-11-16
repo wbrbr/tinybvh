@@ -72,7 +72,7 @@ void embreeError( void* userPtr, enum RTCError error, const char* str )
 
 #ifdef ENABLE_OPENCL
 #define TINY_OCL_IMPLEMENTATION
-#include "external/OpenCL/inc/CL/cl.h"
+#include "CL/cl.h"
 #include "tiny_ocl.h"
 #endif
 
