@@ -39,8 +39,6 @@ if (NOT EMSCRIPTEN)
 endif()
 
 target_include_directories(tiny_bvh_speedtest PRIVATE ${CMAKE_CURRENT_LIST_DIR}/external/OpenCL/inc)
-target_link_directories(tiny_bvh_speedtest PRIVATE ${CMAKE_CURRENT_LIST_DIR}/external/OpenCL/lib)
-
 
 if (NOT MSVC)
 	# Produce debug symbols and set optimization level
@@ -93,7 +91,9 @@ if (NOT MSVC)
 
 	if (NOT APPLE AND NOT EMSCRIPTEN)
 		set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags})
-		set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -l OpenCL)
+		set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags})
+		target_link_directories(tiny_bvh_speedtest PRIVATE ${CMAKE_CURRENT_LIST_DIR}/external/OpenCL/lib)
+		target_link_libraries(tiny_bvh_speedtest OpenCL)
 	elseif (EMSCRIPTEN)
 		# Embed Sponza into the wasm to load it (in theory there are other methods, but this is the simplest)
 		# See https://emscripten.org/docs/porting/files/packaging_files.html#modifying-file-locations-in-the-virtual-file-system
