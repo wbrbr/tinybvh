@@ -10,7 +10,7 @@
 #define LOADSPONZA
 
 // GPU ray tracing
-// #define ENABLE_OPENCL
+#define ENABLE_OPENCL
 
 // tests to perform
 #define BUILD_REFERENCE
