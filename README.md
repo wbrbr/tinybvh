@@ -1,6 +1,16 @@
 # tinybvh
 Single-header BVH construction and traversal library written as "Sane C++" (or "C with classes"). The library has no dependencies. 
 
+# tinyocl
+Single-header OpenCL library, which helps you select and initialize a device. It also loads, compiles and runs kernels, with several convenient features:
+* Include-file expansion for AMD devices
+* Multi-argument passing
+* Host/device buffer management
+* Vendor and architecture detection and propagation to #defines in OpenCL code
+* ..And many other things.
+
+To use tinyocl, just include tiny_ocl.h; this will automatically cause linking with OpenCL.lib in the 'external' folder, which in turn passes on work to vendor-specific driver code. But all that is not your problem! 
+  
 # BVH?
 A Bounding Volume Hierarchy is a data structure used to quickly find intersections in a virtual scene; most commonly between a ray and a group of triangles. You can read more about this in a series of articles on the subject: https://jacco.ompf2.com/2022/04/13/how-to-build-a-bvh-part-1-basics .
 
