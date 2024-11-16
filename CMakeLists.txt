@@ -87,11 +87,9 @@ if (NOT MSVC)
 	set(tiny_bvh_speedtest_cxx_flags ${common_cxx_flags})
 	set(tiny_bvh_speedtest_link_flags ${common_link_flags})
 
-	# OpenCL headers
-
 	if (NOT APPLE AND NOT EMSCRIPTEN)
-		set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags} -fopenmp -Iexternal/OpenCL/inc)
-		set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -fopenmp -Lexternal/OpenCL/lib)
+		set(tiny_bvh_speedtest_cxx_flags ${tiny_bvh_speedtest_cxx_flags} -fopenmp -I./external/OpenCL/inc/)
+		set(tiny_bvh_speedtest_link_flags ${tiny_bvh_speedtest_link_flags} -fopenmp -L./external/OpenCL/lib)
 	elseif (EMSCRIPTEN)
 		# Embed Sponza into the wasm to load it (in theory there are other methods, but this is the simplest)
 		# See https://emscripten.org/docs/porting/files/packaging_files.html#modifying-file-locations-in-the-virtual-file-system
