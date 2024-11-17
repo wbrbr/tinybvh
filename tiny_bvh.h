@@ -105,14 +105,25 @@ THE SOFTWARE.
 // note: formally size needs to be a multiple of 'alignment'.
 // see https://en.cppreference.com/w/c/memory/aligned_alloc
 // EMSCRIPTEN enforces this.
-#define MAKE_MULIPLE_64( x ) ( ( ( x ) + 63 ) & ( ~0x3f ) )
+namespace tinybvh {
+inline size_t make_multiple_64( size_t x ) { return (x + 63) & ~0x3f; }
+}
+
 #ifdef _MSC_VER // Visual Studio / C11
 #include <malloc.h>
 #include <math.h> // for sqrtf, fabs
 #include <string.h> // for memset
 #define ALIGNED( x ) __declspec( align( x ) )
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( MAKE_MULIPLE_64( x ) ), 64 ) )
-#define ALIGNED_FREE( x ) _aligned_free( x )
+namespace tinybvh {
+inline void * default_malloc( size_t size, void * = nullptr)
+{
+	return size == 0 ? 0 : _aligned_malloc( make_multiple_64(size), 64 );
+}
+inline void default_free( void * ptr, void * = nullptr)
+{
+	_aligned_free( ptr );
+}
+}
 #elif defined(__EMSCRIPTEN__) // EMSCRIPTEN - needs to be before gcc and clang to avoid misdetection
 #include <cstdlib>
 #include <cmath>
@@ -121,11 +132,27 @@ THE SOFTWARE.
 #if defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
 // https://emscripten.org/docs/porting/simd.html
 #include <xmmintrin.h>
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
-#define ALIGNED_FREE( x ) _mm_free( x )
+namespace tinybvh {
+inline void * default_malloc( size_t size, void * = nullptr)
+{
+	return size == 0 ? 0 : _mm_malloc( size, 64 );
+}
+inline void default_free( void * ptr, void * = nullptr)
+{
+	_mm_free( ptr );
+}
+}
 #else
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, MAKE_MULIPLE_64( x ) ) )
-#define ALIGNED_FREE( x ) free( x )
+namespace tinybvh {
+inline void * default_malloc( size_t size, void * = nullptr)
+{
+	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64(size) );
+}
+inline void default_free( void * ptr, void * = nullptr)
+{
+	free( ptr );
+}
+}
 #endif
 #else // gcc / clang
 #include <cstdlib>
@@ -134,11 +161,27 @@ THE SOFTWARE.
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
 #if defined(__x86_64__) || defined(_M_X64)
 #include <xmmintrin.h>
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( MAKE_MULIPLE_64( x ) ), 64 ) )
-#define ALIGNED_FREE( x ) _mm_free( x )
+namespace tinybvh {
+inline void * default_malloc( size_t size, void * = nullptr)
+{
+	return size == 0 ? 0 : _mm_malloc( make_multiple_64(size), 64 );
+}
+inline void default_free( void * ptr, void * = nullptr)
+{
+	_mm_free( ptr );
+}
+}
 #else
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, ( MAKE_MULIPLE_64( x ) ) ) )
-#define ALIGNED_FREE( x ) free( x )
+namespace tinybvh {
+inline void * default_malloc( size_t size, void * = nullptr)
+{
+	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64(size) );
+}
+inline void default_free( void * ptr, void * = nullptr)
+{
+	free( ptr );
+}
+}
 #endif
 #endif
 #ifdef BVH_USEAVX
@@ -345,6 +388,13 @@ struct Ray
 	ALIGNED( 16 ) Intersection hit;
 };
 
+struct BVHContext
+{
+	void * (*malloc)( size_t size, void * userdata ) = default_malloc;
+	void (*free)(void * ptr, void * userdata ) = default_free;
+	void * userdata = nullptr;
+};
+
 class BVH
 {
 public:
@@ -450,18 +500,20 @@ public:
 		unsigned clipped = 0;	// Fragment is the result of clipping if > 0.
 		bool validBox() { return bmin.x < 1e30f; }
 	};
-	BVH() = default;
+	BVH(BVHContext ctx = {}): context(ctx)
+	{
+	}
 	~BVH()
 	{
-		ALIGNED_FREE( bvhNode );
-		ALIGNED_FREE( altNode ); // Note: no action if pointer is null
-		ALIGNED_FREE( alt2Node );
-		ALIGNED_FREE( verbose );
-		ALIGNED_FREE( bvh4Node );
-		ALIGNED_FREE( bvh4Alt );
-		ALIGNED_FREE( bvh8Node );
-		ALIGNED_FREE( triIdx );
-		ALIGNED_FREE( fragment );
+		Free( bvhNode );
+		Free( altNode ); // Note: no action if pointer is null
+		Free( alt2Node );
+		Free( verbose );
+		Free( bvh4Node );
+		Free( bvh4Alt );
+		Free( bvh8Node );
+		Free( triIdx );
+		Free( fragment );
 		bvhNode = 0, triIdx = 0, fragment = 0;
 		allocatedBVHNodes = 0;
 		allocatedAltNodes = 0;
@@ -504,6 +556,8 @@ public:
 	void Intersect256Rays( Ray* first ) const;
 	void Intersect256RaysSSE( Ray* packet ) const; // requires BVH_USEAVX
 private:
+	void * Alloc(size_t size);
+	void Free(void * ptr);
 	int Intersect_Wald32Byte( Ray& ray ) const;
 	int Intersect_AilaLaine( Ray& ray ) const;
 	int Intersect_BasicBVH4( Ray& ray ) const; // only for testing, not efficient.
@@ -525,6 +579,7 @@ private:
 	unsigned CountSubtreeTris( const unsigned nodeIdx, unsigned* counters );
 	void MergeSubtree( const unsigned nodeIdx, unsigned* newIdx, unsigned& newIdxPtr );
 public:
+	BVHContext context;				// Context used to provide user-defined allocation functions
 	bvhvec4* verts = 0;				// pointer to input primitive array: 3x16 bytes per tri
 	unsigned triCount = 0;			// number of primitives in tris
 	Fragment* fragment = 0;			// input primitive bounding boxes
@@ -581,6 +636,17 @@ public:
 
 namespace tinybvh {
 
+void * BVH::Alloc(size_t size)
+{
+	return context.malloc ? context.malloc(size, context.userdata) : nullptr;
+}
+
+void BVH::Free(void * ptr)
+{
+	if(context.free)
+		context.free(ptr, context.userdata);
+}
+
 // Basic single-function binned-SAH-builder. 
 // This is the reference builder; it yields a decent tree suitable for ray 
 // tracing on the CPU. This code uses no SIMD instructions. 
@@ -593,15 +659,15 @@ void BVH::Build( const bvhvec4* vertices, const unsigned primCount )
 	const unsigned spaceNeeded = primCount * 2; // upper limit
 	if (allocatedBVHNodes < spaceNeeded)
 	{
-		ALIGNED_FREE( bvhNode );
-		ALIGNED_FREE( triIdx );
-		ALIGNED_FREE( fragment );
-		bvhNode = (BVHNode*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode ) );
+		Free( bvhNode );
+		Free( triIdx );
+		Free( fragment );
+		bvhNode = (BVHNode*)Alloc( spaceNeeded * sizeof( BVHNode ) );
 		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
-		triIdx = (unsigned*)ALIGNED_MALLOC( primCount * sizeof( unsigned ) );
+		triIdx = (unsigned*)Alloc( primCount * sizeof( unsigned ) );
 		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
-		fragment = (Fragment*)ALIGNED_MALLOC( primCount * sizeof( Fragment ) );
+		fragment = (Fragment*)Alloc( primCount * sizeof( Fragment ) );
 	}
 	else assert( rebuildable == true );
 	idxCount = triCount = primCount;
@@ -723,15 +789,15 @@ void BVH::BuildHQ( const bvhvec4* vertices, const unsigned primCount )
 	const unsigned spaceNeeded = primCount * 3;
 	if (allocatedBVHNodes < spaceNeeded)
 	{
-		ALIGNED_FREE( bvhNode );
-		ALIGNED_FREE( triIdx );
-		ALIGNED_FREE( fragment );
-		bvhNode = (BVHNode*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode ) );
+		Free( bvhNode );
+		Free( triIdx );
+		Free( fragment );
+		bvhNode = (BVHNode*)Alloc( spaceNeeded * sizeof( BVHNode ) );
 		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
-		triIdx = (unsigned*)ALIGNED_MALLOC( (primCount + slack) * sizeof( unsigned ) );
+		triIdx = (unsigned*)Alloc( (primCount + slack) * sizeof( unsigned ) );
 		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
-		fragment = (Fragment*)ALIGNED_MALLOC( (primCount + slack) * sizeof( Fragment ) );
+		fragment = (Fragment*)Alloc( (primCount + slack) * sizeof( Fragment ) );
 	}
 	else assert( rebuildable == true );
 	idxCount = primCount + slack;
@@ -1007,8 +1073,8 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 		const unsigned spaceNeeded = usedBVHNodes;
 		if (allocatedAltNodes < spaceNeeded)
 		{
-			ALIGNED_FREE( altNode );
-			altNode = (BVHNodeAlt*)ALIGNED_MALLOC( sizeof( BVHNodeAlt ) * spaceNeeded );
+			Free( altNode );
+			altNode = (BVHNodeAlt*)Alloc( sizeof( BVHNodeAlt ) * spaceNeeded );
 			allocatedAltNodes = spaceNeeded;
 		}
 		memset( altNode, 0, sizeof( BVHNodeAlt ) * spaceNeeded );
@@ -1047,8 +1113,8 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 		const unsigned spaceNeeded = usedBVHNodes;
 		if (allocatedAlt2Nodes < spaceNeeded)
 		{
-			ALIGNED_FREE( alt2Node );
-			alt2Node = (BVHNodeAlt2*)ALIGNED_MALLOC( sizeof( BVHNodeAlt2 ) * spaceNeeded );
+			Free( alt2Node );
+			alt2Node = (BVHNodeAlt2*)Alloc( sizeof( BVHNodeAlt2 ) * spaceNeeded );
 			allocatedAlt2Nodes = spaceNeeded;
 		}
 		memset( alt2Node, 0, sizeof( BVHNodeAlt2 ) * spaceNeeded );
@@ -1090,8 +1156,8 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 		unsigned spaceNeeded = triCount * (refittable ? 2 : 3); // this one needs space to grow to 2N
 		if (allocatedVerbose < spaceNeeded)
 		{
-			ALIGNED_FREE( verbose );
-			verbose = (BVHNodeVerbose*)ALIGNED_MALLOC( sizeof( BVHNodeVerbose ) * spaceNeeded );
+			Free( verbose );
+			verbose = (BVHNodeVerbose*)Alloc( sizeof( BVHNodeVerbose ) * spaceNeeded );
 			allocatedVerbose = spaceNeeded;
 		}
 		memset( verbose, 0, sizeof( BVHNodeVerbose ) * spaceNeeded );
@@ -1128,8 +1194,8 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 		const unsigned spaceNeeded = usedBVHNodes;
 		if (allocatedBVH4Nodes < spaceNeeded)
 		{
-			ALIGNED_FREE( bvh4Node );
-			bvh4Node = (BVHNode4*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode4 ) );
+			Free( bvh4Node );
+			bvh4Node = (BVHNode4*)Alloc( spaceNeeded * sizeof( BVHNode4 ) );
 			allocatedBVH4Nodes = spaceNeeded;
 		}
 		memset( bvh4Node, 0, sizeof( BVHNode4 ) * spaceNeeded );
@@ -1193,10 +1259,10 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 		blocksNeeded += 6 * triCount; // this layout stores tris in the same buffer.
 		if (allocatedAlt4Blocks < blocksNeeded)
 		{
-			ALIGNED_FREE( bvh4Alt );
+			Free( bvh4Alt );
 			assert( sizeof( BVHNode4Alt ) == 64 );
 			assert( bvh4Node != 0 );
-			bvh4Alt = (bvhvec4*)ALIGNED_MALLOC( blocksNeeded * 16 );
+			bvh4Alt = (bvhvec4*)Alloc( blocksNeeded * 16 );
 			allocatedAlt4Blocks = blocksNeeded;
 		}
 		memset( bvh4Alt, 0, 16 * blocksNeeded );
@@ -1306,8 +1372,8 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 		const unsigned spaceNeeded = usedBVHNodes;
 		if (allocatedBVH8Nodes < spaceNeeded)
 		{
-			ALIGNED_FREE( bvh8Node );
-			bvh8Node = (BVHNode8*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode8 ) );
+			Free( bvh8Node );
+			bvh8Node = (BVHNode8*)Alloc( spaceNeeded * sizeof( BVHNode8 ) );
 			allocatedBVH8Nodes = spaceNeeded;
 		}
 		memset( bvh8Node, 0, sizeof( BVHNode8 ) * spaceNeeded );
@@ -1368,8 +1434,8 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 		unsigned spaceNeeded = usedBVH8Nodes * 5; // CWBVH nodes use 80 bytes each.
 		if (spaceNeeded > allocatedCWBVHBlocks)
 		{
-			bvh8Compact = (bvhvec4*)ALIGNED_MALLOC( spaceNeeded * 16 );
-			bvh8Tris = (bvhvec4*)ALIGNED_MALLOC( idxCount * 3 * 16 );
+			bvh8Compact = (bvhvec4*)Alloc( spaceNeeded * 16 );
+			bvh8Tris = (bvhvec4*)Alloc( idxCount * 3 * 16 );
 			allocatedCWBVHBlocks = spaceNeeded;
 		}
 		memset( bvh8Compact, 0, spaceNeeded * 16 );
@@ -1492,8 +1558,8 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 		const unsigned spaceNeeded = usedVerboseNodes;
 		if (allocatedBVHNodes < spaceNeeded)
 		{
-			ALIGNED_FREE( bvhNode );
-			bvhNode = (BVHNode*)ALIGNED_MALLOC( triCount * 2 * sizeof( BVHNode ) );
+			Free( bvhNode );
+			bvhNode = (BVHNode*)Alloc( triCount * 2 * sizeof( BVHNode ) );
 			allocatedBVHNodes = spaceNeeded;
 		}
 		memset( bvhNode, 0, sizeof( BVHNode ) * spaceNeeded );
@@ -1592,7 +1658,7 @@ void BVH::Compact( const BVHLayout layout )
 {
 	if (layout == WALD_32BYTE)
 	{
-		BVHNode* tmp = (BVHNode*)ALIGNED_MALLOC( sizeof( BVHNode ) * usedBVHNodes );
+		BVHNode* tmp = (BVHNode*)Alloc( sizeof( BVHNode ) * usedBVHNodes );
 		memcpy( tmp, bvhNode, 2 * sizeof( BVHNode ) );
 		unsigned newNodePtr = 2, nodeIdx = 0, stack[64], stackPtr = 0;
 		while (1)
@@ -1609,7 +1675,7 @@ void BVH::Compact( const BVHLayout layout )
 			nodeIdx = stack[--stackPtr];
 		}
 		usedBVHNodes = newNodePtr;
-		ALIGNED_FREE( bvhNode );
+		Free( bvhNode );
 		bvhNode = tmp;
 	}
 	else if (layout == VERBOSE)
@@ -1617,7 +1683,7 @@ void BVH::Compact( const BVHLayout layout )
 		// Same algorithm but different data.
 		// Note that compacting a 'verbose' BVH has the side effect that
 		// left and right children are stored consecutively.
-		BVHNodeVerbose* tmp = (BVHNodeVerbose*)ALIGNED_MALLOC( sizeof( BVHNodeVerbose ) * usedVerboseNodes );
+		BVHNodeVerbose* tmp = (BVHNodeVerbose*)Alloc( sizeof( BVHNodeVerbose ) * usedVerboseNodes );
 		memcpy( tmp, verbose, 2 * sizeof( BVHNodeVerbose ) );
 		unsigned newNodePtr = 2, nodeIdx = 0, stack[64], stackPtr = 0;
 		while (1)
@@ -1634,7 +1700,7 @@ void BVH::Compact( const BVHLayout layout )
 			nodeIdx = stack[--stackPtr];
 		}
 		usedVerboseNodes = newNodePtr;
-		ALIGNED_FREE( verbose );
+		Free( verbose );
 		verbose = tmp;
 	}
 	else
@@ -1693,8 +1759,8 @@ void BVH::SplitLeafs()
 void BVH::MergeLeafs()
 {
 	// allocate some working space
-	unsigned* subtreeTriCount = (unsigned*)ALIGNED_MALLOC( usedVerboseNodes * 4 );
-	unsigned* newIdx = (unsigned*)ALIGNED_MALLOC( idxCount * 4 );
+	unsigned* subtreeTriCount = (unsigned*)Alloc( usedVerboseNodes * 4 );
+	unsigned* newIdx = (unsigned*)Alloc( idxCount * 4 );
 	memset( subtreeTriCount, 0, usedVerboseNodes * 4 );
 	CountSubtreeTris( 0, subtreeTriCount );
 	unsigned stack[64], stackPtr = 0, nodeIdx = 0, newIdxPtr = 0;
@@ -1745,8 +1811,8 @@ void BVH::MergeLeafs()
 		}
 	}
 	// cleanup
-	ALIGNED_FREE( subtreeTriCount );
-	ALIGNED_FREE( triIdx );
+	Free( subtreeTriCount );
+	Free( triIdx );
 	triIdx = newIdx;
 	may_have_holes = true; // all over the place, in fact
 }
@@ -2447,15 +2513,15 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned primCount )
 	const unsigned spaceNeeded = primCount * 2;
 	if (allocatedBVHNodes < spaceNeeded)
 	{
-		ALIGNED_FREE( bvhNode );
-		ALIGNED_FREE( triIdx );
-		ALIGNED_FREE( fragment );
+		Free( bvhNode );
+		Free( triIdx );
+		Free( fragment );
 		verts = (bvhvec4*)vertices;
-		triIdx = (unsigned*)ALIGNED_MALLOC( primCount * sizeof( unsigned ) );
-		bvhNode = (BVHNode*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode ) );
+		triIdx = (unsigned*)Alloc( primCount * sizeof( unsigned ) );
+		bvhNode = (BVHNode*)Alloc( spaceNeeded * sizeof( BVHNode ) );
 		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
-		fragment = (Fragment*)ALIGNED_MALLOC( primCount * sizeof( Fragment ) );
+		fragment = (Fragment*)Alloc( primCount * sizeof( Fragment ) );
 	}
 	else assert( rebuildable == true );
 	triCount = idxCount = primCount;
@@ -3108,15 +3174,15 @@ void BVH::BuildNEON( const bvhvec4* vertices, const unsigned primCount )
 	const unsigned spaceNeeded = primCount * 2;
 	if (allocatedBVHNodes < spaceNeeded)
 	{
-		ALIGNED_FREE( bvhNode );
-		ALIGNED_FREE( triIdx );
-		ALIGNED_FREE( fragment );
+		Free( bvhNode );
+		Free( triIdx );
+		Free( fragment );
 		verts = (bvhvec4*)vertices;
-		triIdx = (unsigned*)ALIGNED_MALLOC( primCount * sizeof( unsigned ) );
-		bvhNode = (BVHNode*)ALIGNED_MALLOC( spaceNeeded * sizeof( BVHNode ) );
+		triIdx = (unsigned*)Alloc( primCount * sizeof( unsigned ) );
+		bvhNode = (BVHNode*)Alloc( spaceNeeded * sizeof( BVHNode ) );
 		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
-		fragment = (Fragment*)ALIGNED_MALLOC( primCount * sizeof( Fragment ) );
+		fragment = (Fragment*)Alloc( primCount * sizeof( Fragment ) );
 	}
 	else assert( rebuildable == true );
 	triCount = idxCount = primCount;
