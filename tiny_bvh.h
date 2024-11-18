@@ -3177,15 +3177,15 @@ void BVH::BuildNEON( const bvhvec4* vertices, const unsigned primCount )
 	const unsigned spaceNeeded = primCount * 2;
 	if (allocatedBVHNodes < spaceNeeded)
 	{
-		Free( bvhNode );
-		Free( triIdx );
-		Free( fragment );
+		AlignedFree( bvhNode );
+		AlignedFree( triIdx );
+		AlignedFree( fragment );
 		verts = (bvhvec4*)vertices;
-		triIdx = (unsigned*)Alloc( primCount * sizeof( unsigned ) );
-		bvhNode = (BVHNode*)Alloc( spaceNeeded * sizeof( BVHNode ) );
+		triIdx = (unsigned*)AlignedAlloc( primCount * sizeof( unsigned ) );
+		bvhNode = (BVHNode*)AlignedAlloc( spaceNeeded * sizeof( BVHNode ) );
 		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 ); // avoid crash in refit.
-		fragment = (Fragment*)Alloc( primCount * sizeof( Fragment ) );
+		fragment = (Fragment*)AlignedAlloc( primCount * sizeof( Fragment ) );
 	}
 	else assert( rebuildable == true );
 	triCount = idxCount = primCount;
