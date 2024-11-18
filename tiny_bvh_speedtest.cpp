@@ -16,14 +16,14 @@
 #define BUILD_REFERENCE
 // #define BUILD_AVX
 #define BUILD_NEON
-#define BUILD_SBVH
-#define TRAVERSE_2WAY_ST
-#define TRAVERSE_ALT2WAY_ST
-#define TRAVERSE_SOA2WAY_ST
-#define TRAVERSE_2WAY_MT
-#define TRAVERSE_2WAY_MT_PACKET
-#define TRAVERSE_2WAY_MT_DIVERGENT
-#define TRAVERSE_OPTIMIZED_ST
+//#define BUILD_SBVH
+//#define TRAVERSE_2WAY_ST
+//#define TRAVERSE_ALT2WAY_ST
+//#define TRAVERSE_SOA2WAY_ST
+//#define TRAVERSE_2WAY_MT
+//#define TRAVERSE_2WAY_MT_PACKET
+//#define TRAVERSE_2WAY_MT_DIVERGENT
+//#define TRAVERSE_OPTIMIZED_ST
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
 
@@ -164,7 +164,7 @@ int main()
 	s.seekp( 0 );
 	s.read( (char*)&verts, 4 );
 	printf( "Loading triangle data (%i tris).\n", verts );
-	verts *= 3, triangles = (bvhvec4*)default_aligned_malloc( verts * 16 );
+	verts *= 3, triangles = (bvhvec4*)tinybvh::default_aligned_malloc( verts * 16 );
 	s.read( (char*)triangles, verts * 16 );
 #else
 	// generate a sphere flake scene
@@ -186,7 +186,7 @@ int main()
 	// generate primary rays in a cacheline-aligned buffer - and, for data locality:
 	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
 	int N = 0;
-	Ray* rays = (Ray*)default_aligned_malloc( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
+	Ray* rays = (Ray*)tinybvh::default_aligned_malloc( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
 	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)

@@ -82,6 +82,7 @@ THE SOFTWARE.
 // include fast AVX BVH builder
 #if defined(__x86_64__) || defined(_M_X64) || defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
 #define BVH_USEAVX
+#include "immintrin.h" // for __m128 and __m256
 #elif defined(__aarch64__) || defined(_M_ARM64)
 #define BVH_USENEON
 #include "arm_neon.h"
@@ -113,14 +114,13 @@ THE SOFTWARE.
 #endif
 
 // aligned memory allocation
-// note: formally size needs to be a multiple of 'alignment'.
-// see https://en.cppreference.com/w/c/memory/aligned_alloc
+// note: formally size needs to be a multiple of 'alignment'. See:
+// https://en.cppreference.com/w/c/memory/aligned_alloc
 // EMSCRIPTEN enforces this.
-namespace tinybvh
-{
+// Copy of the same construct in tinyocl, different namespace.
+namespace tinybvh {
 inline size_t make_multiple_64( size_t x ) { return (x + 63) & ~0x3f; }
 }
-
 #ifdef _MSC_VER // Visual Studio / C11
 #define ALIGNED( x ) __declspec( align( x ) )
 namespace tinybvh {
@@ -128,10 +128,7 @@ inline void* default_aligned_malloc( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : _aligned_malloc( make_multiple_64( size ), 64 );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr )
-{
-	_aligned_free( ptr );
-}
+inline void default_aligned_free( void* ptr, void* = nullptr ) { _aligned_free( ptr ); }
 }
 #elif defined(__EMSCRIPTEN__) // EMSCRIPTEN - needs to be before gcc and clang to avoid misdetection
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
@@ -143,10 +140,7 @@ inline void* default_aligned_malloc( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : _mm_malloc( size, 64 );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr )
-{
-	_mm_free( ptr );
-}
+inline void default_aligned_free( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
 }
 #else
 namespace tinybvh {
@@ -154,10 +148,7 @@ inline void* default_aligned_malloc( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64( size ) );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr )
-{
-	free( ptr );
-}
+inline void default_aligned_free( void* ptr, void* = nullptr ) { free( ptr ); }
 }
 #endif
 #else // gcc / clang
@@ -169,10 +160,7 @@ inline void* default_aligned_malloc( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : _mm_malloc( make_multiple_64( size ), 64 );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr )
-{
-	_mm_free( ptr );
-}
+inline void default_aligned_free( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
 }
 #else
 namespace tinybvh {
@@ -180,15 +168,9 @@ inline void* default_aligned_malloc( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64( size ) );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr )
-{
-	free( ptr );
-}
+inline void default_aligned_free( void* ptr, void* = nullptr ) { free( ptr ); }
 }
 #endif
-#endif
-#ifdef BVH_USEAVX
-#include "immintrin.h" // for __m128 and __m256
 #endif
 
 namespace tinybvh {
@@ -357,7 +339,7 @@ typedef bvhvec4 SIMDVEC4;
 
 // ============================================================================
 //
-//        R A Y   T R A C I N G   S T R U C T S  /  C L A S S E S
+//        T I N Y _ B V H   I N T E R F A C E
 // 
 // ============================================================================
 

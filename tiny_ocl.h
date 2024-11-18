@@ -38,40 +38,62 @@ THE SOFTWARE.
 #include <vector>
 
 // aligned memory allocation
-// note: formally size needs to be a multiple of 'alignment'.
-// see https://en.cppreference.com/w/c/memory/aligned_alloc
+// note: formally size needs to be a multiple of 'alignment'. See:
+// https://en.cppreference.com/w/c/memory/aligned_alloc
 // EMSCRIPTEN enforces this.
-#define MAKE_MULIPLE_64( x ) ( ( ( x ) + 63 ) & ( ~0x3f ) )
+// Copy of the same construct in tinybvh, different namespace.
+namespace tinyocl {
+inline size_t make_multiple_64( size_t x ) { return (x + 63) & ~0x3f; }
+}
 #ifdef _MSC_VER // Visual Studio / C11
-#include <malloc.h>
-#include <math.h> // for sqrtf, fabs
-#include <string.h> // for memset
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( MAKE_MULIPLE_64( x ) ), 64 ) )
-#define ALIGNED_FREE( x ) _aligned_free( x )
+#define ALIGNED( x ) __declspec( align( x ) )
+namespace tinyocl {
+inline void* default_aligned_malloc( size_t size, void* = nullptr )
+{
+	return size == 0 ? 0 : _aligned_malloc( make_multiple_64( size ), 64 );
+}
+inline void default_aligned_free( void* ptr, void* = nullptr ) { _aligned_free( ptr ); }
+}
 #elif defined(__EMSCRIPTEN__) // EMSCRIPTEN - needs to be before gcc and clang to avoid misdetection
-#include <cstdlib>
-#include <cmath>
-#include <cstring>
+#define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
 #if defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
 // https://emscripten.org/docs/porting/simd.html
 #include <xmmintrin.h>
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
-#define ALIGNED_FREE( x ) _mm_free( x )
+namespace tinyocl {
+inline void* default_aligned_malloc( size_t size, void* = nullptr )
+{
+	return size == 0 ? 0 : _mm_malloc( size, 64 );
+}
+inline void default_aligned_free( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
+}
 #else
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, MAKE_MULIPLE_64( x ) ) )
-#define ALIGNED_FREE( x ) free( x )
+namespace tinyocl {
+inline void* default_aligned_malloc( size_t size, void* = nullptr )
+{
+	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64( size ) );
+}
+inline void default_aligned_free( void* ptr, void* = nullptr ) { free( ptr ); }
+}
 #endif
 #else // gcc / clang
-#include <cstdlib>
-#include <cmath>
-#include <cstring>
+#define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
 #if defined(__x86_64__) || defined(_M_X64)
 #include <xmmintrin.h>
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( MAKE_MULIPLE_64( x ) ), 64 ) )
-#define ALIGNED_FREE( x ) _mm_free( x )
+namespace tinyocl {
+inline void* default_aligned_malloc( size_t size, void* = nullptr )
+{
+	return size == 0 ? 0 : _mm_malloc( make_multiple_64( size ), 64 );
+}
+inline void default_aligned_free( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
+}
 #else
-#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, ( MAKE_MULIPLE_64( x ) ) ) )
-#define ALIGNED_FREE( x ) free( x )
+namespace tinyocl {
+inline void* default_aligned_malloc( size_t size, void* = nullptr )
+{
+	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64( size ) );
+}
+inline void default_aligned_free( void* ptr, void* = nullptr ) { free( ptr ); }
+}
 #endif
 #endif
 
@@ -85,6 +107,34 @@ struct oclint2
 	oclint2( const int a ) : x( a ), y( a ) {}
 };
 struct oclvec3 { float x, y, z; };
+
+// ============================================================================
+//
+//        T I N Y _ O C L   I N T E R F A C E
+// 
+// ============================================================================
+
+// OpenCL context
+// You only need to explicitly instantiate this if you want to override the
+// default memory allocator used by tinyocl::Buffer. In all other cases, the
+// first use of tinyocl (creating a buffer, loading a kernel) will take care
+// of this for you transparently.
+struct OpenCLContext
+{
+	void* (*malloc)(size_t size, void* userdata) = default_aligned_malloc;
+	void (*free)(void* ptr, void* userdata) = default_aligned_free;
+	void* userdata = nullptr;
+};
+class OpenCL
+{
+public:
+	OpenCL( OpenCLContext ctx = {} ) : context( ctx ) { ocl = this; }
+	OpenCLContext context;
+	void* AlignedAlloc( size_t size );
+	void AlignedFree( void* ptr );
+	static OpenCL* GetInstance() { return ocl; }
+	inline static OpenCL* ocl = 0;
+};
 
 // OpenCL buffer
 class Buffer
@@ -104,7 +154,9 @@ public:
 	void CopyFromDevice( const int offset, const int size, const bool blocking = true );
 	void CopyTo( Buffer* buffer );
 	void Clear();
+private:
 	// data members
+public:
 	unsigned int* hostBuffer;
 	cl_mem deviceBuffer = 0;
 	unsigned int type, size /* in bytes */, textureID;
@@ -127,6 +179,7 @@ public:
 	static cl_command_queue& GetQueue2() { return queue2; }
 	static cl_context& GetContext() { return context; }
 	static cl_device_id& GetDevice() { return device; }
+	static OpenCL ocl;
 	// run methods
 #if 1
 	void Run( cl_event* eventToWaitFor = 0, cl_event* eventToSet = 0 );
@@ -445,6 +498,18 @@ static cl_int getPlatformID( cl_platform_id* platform )
 	return CL_SUCCESS;
 }
 
+// memory management
+// ----------------------------------------------------------------------------
+void* OpenCL::AlignedAlloc( size_t size )
+{
+	return OpenCL::context.malloc ? OpenCL::context.malloc( size, OpenCL::context.userdata ) : nullptr;
+}
+void OpenCL::AlignedFree( void* ptr )
+{
+	if (OpenCL::context.free)
+		OpenCL::context.free( ptr, OpenCL::context.userdata );
+}
+
 // Buffer constructor
 // ----------------------------------------------------------------------------
 Buffer::Buffer( unsigned int N, void* ptr, unsigned int t )
@@ -483,7 +548,7 @@ Buffer::~Buffer()
 	{
 		if (ownData)
 		{
-			ALIGNED_FREE( hostBuffer );
+			OpenCL::GetInstance()->AlignedFree( hostBuffer );
 			hostBuffer = 0;
 		}
 		if ((type & (TEXTURE | TARGET)) == 0) clReleaseMemObject( deviceBuffer );
@@ -497,7 +562,7 @@ unsigned int* Buffer::GetHostPtr()
 	if (size == 0) return 0;
 	if (!hostBuffer)
 	{
-		hostBuffer = (unsigned*)ALIGNED_MALLOC( size );
+		hostBuffer = (unsigned*)OpenCL::GetInstance()->AlignedAlloc( size );
 		ownData = true;
 		aligned = true;
 	}
@@ -512,7 +577,7 @@ void Buffer::CopyToDevice( const bool blocking )
 	cl_int error;
 	if (!hostBuffer)
 	{
-		hostBuffer = (unsigned*)ALIGNED_MALLOC( size );
+		hostBuffer = (unsigned*)OpenCL::GetInstance()->AlignedAlloc( size );
 		ownData = true;
 		aligned = true;
 	}
@@ -524,7 +589,7 @@ void Buffer::CopyToDevice( const int offset, const int byteCount, const bool blo
 	cl_int error;
 	if (!hostBuffer)
 	{
-		hostBuffer = (unsigned*)ALIGNED_MALLOC( size );
+		hostBuffer = (unsigned*)OpenCL::GetInstance()->AlignedAlloc( size );
 		ownData = true;
 		aligned = true;
 	}
@@ -548,7 +613,7 @@ void Buffer::CopyFromDevice( const bool blocking )
 	cl_int error;
 	if (!hostBuffer)
 	{
-		hostBuffer = (unsigned*)ALIGNED_MALLOC( size );
+		hostBuffer = (unsigned*)OpenCL::GetInstance()->AlignedAlloc( size );
 		ownData = true;
 		aligned = true;
 	}
@@ -560,7 +625,7 @@ void Buffer::CopyFromDevice( const int offset, const int byteCount, const bool b
 	cl_int error;
 	if (!hostBuffer)
 	{
-		hostBuffer = (unsigned*)ALIGNED_MALLOC( size );
+		hostBuffer = (unsigned*)OpenCL::GetInstance()->AlignedAlloc( size );
 		ownData = true;
 		aligned = true;
 	}
@@ -816,6 +881,9 @@ Kernel::~Kernel()
 // ----------------------------------------------------------------------------
 bool Kernel::InitCL()
 {
+	// prepare memory management
+	if (!OpenCL::ocl) OpenCL::ocl = new OpenCL(); // use the default memory allocation functions
+	// prepare OpenCL for first use
 	cl_platform_id platform;
 	cl_device_id* devices;
 	cl_uint devCount;
