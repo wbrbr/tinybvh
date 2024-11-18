@@ -115,10 +115,11 @@ struct oclvec3 { float x, y, z; };
 // ============================================================================
 
 // OpenCL context
-// You only need to explicitly instantiate this if you want to override the
-// default memory allocator used by tinyocl::Buffer. In all other cases, the
-// first use of tinyocl (creating a buffer, loading a kernel) will take care
-// of this for you transparently.
+// *Only!* in case you want to override the default memory allocator used by 
+// tinyocl::Buffer: call OpenCL::CreateInstance with OpenCLContext fields describing
+// your allocator and deallocator, before using any tinyocl functionality.
+// In all other cases, the first use of tinyocl (creating a buffer, loading a 
+// kernel) will take care of this for you transparently.
 struct OpenCLContext
 {
 	void* (*malloc)(size_t size, void* userdata) = default_aligned_malloc;
@@ -132,6 +133,7 @@ public:
 	OpenCLContext context;
 	void* AlignedAlloc( size_t size );
 	void AlignedFree( void* ptr );
+	static void CreateInstance( OpenCLContext ctx ) { ocl = new OpenCL( ctx ); }
 	static OpenCL* GetInstance() { return ocl; }
 	inline static OpenCL* ocl = 0;
 };

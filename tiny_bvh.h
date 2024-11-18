@@ -124,11 +124,11 @@ inline size_t make_multiple_64( size_t x ) { return (x + 63) & ~0x3f; }
 #ifdef _MSC_VER // Visual Studio / C11
 #define ALIGNED( x ) __declspec( align( x ) )
 namespace tinybvh {
-inline void* default_aligned_malloc( size_t size, void* = nullptr )
+inline void* malloc64( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : _aligned_malloc( make_multiple_64( size ), 64 );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr ) { _aligned_free( ptr ); }
+inline void free64( void* ptr, void* = nullptr ) { _aligned_free( ptr ); }
 }
 #elif defined(__EMSCRIPTEN__) // EMSCRIPTEN - needs to be before gcc and clang to avoid misdetection
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
@@ -136,19 +136,19 @@ inline void default_aligned_free( void* ptr, void* = nullptr ) { _aligned_free( 
 // https://emscripten.org/docs/porting/simd.html
 #include <xmmintrin.h>
 namespace tinybvh {
-inline void* default_aligned_malloc( size_t size, void* = nullptr )
+inline void* malloc64( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : _mm_malloc( size, 64 );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
+inline void free64( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
 }
 #else
 namespace tinybvh {
-inline void* default_aligned_malloc( size_t size, void* = nullptr )
+inline void* malloc64( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64( size ) );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr ) { free( ptr ); }
+inline void free64( void* ptr, void* = nullptr ) { free( ptr ); }
 }
 #endif
 #else // gcc / clang
@@ -156,19 +156,19 @@ inline void default_aligned_free( void* ptr, void* = nullptr ) { free( ptr ); }
 #if defined(__x86_64__) || defined(_M_X64)
 #include <xmmintrin.h>
 namespace tinybvh {
-inline void* default_aligned_malloc( size_t size, void* = nullptr )
+inline void* malloc64( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : _mm_malloc( make_multiple_64( size ), 64 );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
+inline void free64( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
 }
 #else
 namespace tinybvh {
-inline void* default_aligned_malloc( size_t size, void* = nullptr )
+inline void* malloc64( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64( size ) );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr ) { free( ptr ); }
+inline void free64( void* ptr, void* = nullptr ) { free( ptr ); }
 }
 #endif
 #endif
@@ -375,8 +375,8 @@ struct Ray
 
 struct BVHContext
 {
-	void* (*malloc)(size_t size, void* userdata) = default_aligned_malloc;
-	void (*free)(void* ptr, void* userdata) = default_aligned_free;
+	void* (*malloc)(size_t size, void* userdata) = malloc64;
+	void (*free)(void* ptr, void* userdata) = free64;
 	void* userdata = nullptr;
 };
 
@@ -2480,11 +2480,12 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned primCount )
 {
 	int test = BVHBINS;
 	if (test != 8) assert( false ); // AVX builders require BVHBINS == 8.
+	assert( ((long long)vertices & 63) == 0 ); // buffer must be cacheline-aligned
 	// aligned data
-	ALIGNED( 64 ) __m256 binbox[3 * BVHBINS];				// 768 bytes
-	ALIGNED( 64 ) __m256 binboxOrig[3 * BVHBINS];			// 768 bytes
+	ALIGNED( 64 ) __m256 binbox[3 * BVHBINS];			// 768 bytes
+	ALIGNED( 64 ) __m256 binboxOrig[3 * BVHBINS];		// 768 bytes
 	ALIGNED( 64 ) unsigned count[3][BVHBINS]{};			// 96 bytes
-	ALIGNED( 64 ) __m256 bestLBox, bestRBox;				// 64 bytes
+	ALIGNED( 64 ) __m256 bestLBox, bestRBox;			// 64 bytes
 	// some constants
 	static const __m128 max4 = _mm_set1_ps( -1e30f ), half4 = _mm_set1_ps( 0.5f );
 	static const __m128 two4 = _mm_set1_ps( 2.0f ), min1 = _mm_set1_ps( -1 );
@@ -3141,11 +3142,12 @@ void BVH::BuildNEON( const bvhvec4* vertices, const unsigned primCount )
 {
 	int test = BVHBINS;
 	if (test != 8) assert( false ); // AVX builders require BVHBINS == 8.
+	assert( ((long long)vertices & 63) == 0 ); // buffer must be cacheline-aligned
 	// aligned data
-	ALIGNED( 64 ) float32x4x2_t binbox[3 * BVHBINS];                // 768 bytes
-	ALIGNED( 64 ) float32x4x2_t binboxOrig[3 * BVHBINS];            // 768 bytes
-	ALIGNED( 64 ) unsigned count[3][BVHBINS]{};            // 96 bytes
-	ALIGNED( 64 ) float32x4x2_t bestLBox, bestRBox;                // 64 bytes
+	ALIGNED( 64 ) float32x4x2_t binbox[3 * BVHBINS];		// 768 bytes
+	ALIGNED( 64 ) float32x4x2_t binboxOrig[3 * BVHBINS];	// 768 bytes
+	ALIGNED( 64 ) unsigned count[3][BVHBINS]{};				// 96 bytes
+	ALIGNED( 64 ) float32x4x2_t bestLBox, bestRBox;			// 64 bytes
 	// some constants
 	static const float32x4_t max4 = vdupq_n_f32( -1e30f ), half4 = vdupq_n_f32( 0.5f );
 	static const float32x4_t two4 = vdupq_n_f32( 2.0f ), min1 = vdupq_n_f32( -1 );
