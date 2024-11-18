@@ -48,11 +48,11 @@ inline size_t make_multiple_64( size_t x ) { return (x + 63) & ~0x3f; }
 #ifdef _MSC_VER // Visual Studio / C11
 #define ALIGNED( x ) __declspec( align( x ) )
 namespace tinyocl {
-inline void* default_aligned_malloc( size_t size, void* = nullptr )
+inline void* malloc64( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : _aligned_malloc( make_multiple_64( size ), 64 );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr ) { _aligned_free( ptr ); }
+inline void free64( void* ptr, void* = nullptr ) { _aligned_free( ptr ); }
 }
 #elif defined(__EMSCRIPTEN__) // EMSCRIPTEN - needs to be before gcc and clang to avoid misdetection
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
@@ -60,19 +60,19 @@ inline void default_aligned_free( void* ptr, void* = nullptr ) { _aligned_free( 
 // https://emscripten.org/docs/porting/simd.html
 #include <xmmintrin.h>
 namespace tinyocl {
-inline void* default_aligned_malloc( size_t size, void* = nullptr )
+inline void* malloc64( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : _mm_malloc( size, 64 );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
+inline void free64( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
 }
 #else
 namespace tinyocl {
-inline void* default_aligned_malloc( size_t size, void* = nullptr )
+inline void* malloc64( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64( size ) );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr ) { free( ptr ); }
+inline void free64( void* ptr, void* = nullptr ) { free( ptr ); }
 }
 #endif
 #else // gcc / clang
@@ -80,19 +80,19 @@ inline void default_aligned_free( void* ptr, void* = nullptr ) { free( ptr ); }
 #if defined(__x86_64__) || defined(_M_X64)
 #include <xmmintrin.h>
 namespace tinyocl {
-inline void* default_aligned_malloc( size_t size, void* = nullptr )
+inline void* malloc64( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : _mm_malloc( make_multiple_64( size ), 64 );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
+inline void free64( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
 }
 #else
 namespace tinyocl {
-inline void* default_aligned_malloc( size_t size, void* = nullptr )
+inline void* malloc64( size_t size, void* = nullptr )
 {
 	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64( size ) );
 }
-inline void default_aligned_free( void* ptr, void* = nullptr ) { free( ptr ); }
+inline void free64( void* ptr, void* = nullptr ) { free( ptr ); }
 }
 #endif
 #endif
@@ -122,8 +122,8 @@ struct oclvec3 { float x, y, z; };
 // kernel) will take care of this for you transparently.
 struct OpenCLContext
 {
-	void* (*malloc)(size_t size, void* userdata) = default_aligned_malloc;
-	void (*free)(void* ptr, void* userdata) = default_aligned_free;
+	void* (*malloc)(size_t size, void* userdata) = malloc64;
+	void (*free)(void* ptr, void* userdata) = free64;
 	void* userdata = nullptr;
 };
 class OpenCL
