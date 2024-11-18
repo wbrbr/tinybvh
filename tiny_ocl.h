@@ -22,7 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-// Nov 15, '24: version 0.1.0 : Accidentally started another tiny lib 
+// Nov 18, '24: version 0.1.1 : Added custom alloc/free.
+// Nov 15, '24: version 0.1.0 : Accidentally started another tiny lib.
 
 //
 // Use this in *one* .c or .cpp
@@ -306,7 +307,17 @@ private:
 	template<class T> void SetArgument( int idx, T value )
 	{
 		CheckCLStarted();
-		clSetKernelArg( kernel, idx, sizeof( T ), &value );
+		if (sizeof( T ) == 12)
+		{
+			// probably int3 / float3; pad to 16 bytes
+			unsigned tmp[4] = {};
+			memcpy( tmp, &value, 12 );
+			clSetKernelArg( kernel, idx, 16, &value );
+		}
+		else
+		{
+			clSetKernelArg( kernel, idx, sizeof( T ), &value );
+		}
 	}
 	// other methods
 public:
@@ -357,6 +368,7 @@ using namespace tinyocl;
 #else
 #include <unistd.h>
 #endif
+#include <fstream>
 
 #define CHECKCL(r) CheckCL( r, __FILE__, __LINE__ )
 

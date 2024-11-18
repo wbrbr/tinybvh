@@ -22,6 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+// Nov 18, '24: version 0.9.1 : Added custom alloc/free (tcantenot).
+// Mov 16, '24: version 0.9.0 : (external) OpenCL in speedtest.
 // Nov 15, '24: version 0.8.3 : Incremental update / bugfixes.
 // Nov 14, '24: version 0.8.0 : ARM/NEON support.
 // Nov 13, '24: version 0.7.5 : Support for WASM with EMSCRIPTEN. 
@@ -94,7 +96,7 @@ THE SOFTWARE.
 // library version
 #define TINY_BVH_VERSION_MAJOR	0
 #define TINY_BVH_VERSION_MINOR	9
-#define TINY_BVH_VERSION_SUB	1
+#define TINY_BVH_VERSION_SUB	2
 
 // ============================================================================
 //
@@ -351,7 +353,7 @@ struct Intersection
 	// squeezing this in the 'prim' field in some way.
 	// Using this data and the original triangle data, all other info for
 	// shading (such as normal, texture color etc.) can be reconstructed.
-	float t, u, v;		// distance along ray & barycentric coordinates of the intersection
+	float t, u, v;	// distance along ray & barycentric coordinates of the intersection
 	unsigned prim;	// primitive index
 };
 

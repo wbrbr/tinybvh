@@ -7,7 +7,7 @@
 #define SCRHEIGHT	600
 
 // scene selection
-#define LOADSPONZA
+// #define LOADSPONZA
 
 // GPU ray tracing
 #define ENABLE_OPENCL
@@ -56,7 +56,7 @@ using namespace tinybvh;
 bvhvec4* triangles = 0;
 #include <fstream>
 #else
-ALIGNED( 16 ) bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
+ALIGNED( 64 ) bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
 #endif
 int verts = 0;
 BVH bvh;
@@ -150,17 +150,20 @@ int main()
 #endif
 	printf( "----------------------------------------------------------------\n" );
 
+#ifdef ENABLE_OPENCL
+
+	// load and compile the OpenCL kernel code
+	// This also triggers OpenCL init and device identification.
+	tinyocl::Kernel kernel( "traverse.cl", "traverse" );
+	printf( "----------------------------------------------------------------\n" );
+
+#endif
+
 #ifdef LOADSPONZA
 	// load raw vertex data for Crytek's Sponza
-	std::string filename{ "../testdata/cryteksponza.bin" };
+	std::string filename{ "testdata/cryteksponza.bin" };
 	std::fstream s{ filename, s.binary | s.in };
-	if (!s.is_open())
-	{
-		// try again, look in .\testdata
-		filename = std::string{ "./testdata/cryteksponza.bin" };
-		s = std::fstream{ filename, s.binary | s.in };
-		assert( s.is_open() );
-	}
+	assert( s.is_open() );
 	s.seekp( 0 );
 	s.read( (char*)&verts, 4 );
 	printf( "Loading triangle data (%i tris).\n", verts );
@@ -329,24 +332,38 @@ int main()
 #ifdef GPU_2WAY
 
 	// trace the rays on GPU using OpenCL
-	printf( "- CPU, coherent,   alt 2-way layout,   ST: " );
+	printf( "- GPU, coherent,   alt 2-way layout,  ocl: " );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::AILA_LAINE );
-	// load and compile the OpenCL kernel code
-	tinyocl::Kernel kernel( "traverse.cl", "traverse" );
-	// create an OpenCL buffer for the BVH nodes calculated by tiny_bvh.h
-	tinyocl::Buffer gpuNodes( bvh.usedBVHNodes * sizeof( BVH::BVHNodeAlt ) );
-	// copy the data to the host-side version of the buffer
-	memcpy( gpuNodes.GetHostPtr(), bvh.altNode, bvh.usedBVHNodes * sizeof( BVH::BVHNodeAlt ) );
-	// synchronize the host-side buffer to the gpu side
+	// create OpenCL buffers for the BVH data calculated by tiny_bvh.h
+	tinyocl::Buffer gpuNodes( bvh.usedBVHNodes * sizeof( BVH::BVHNodeAlt ), bvh.altNode );
+	tinyocl::Buffer idxData( bvh.idxCount * sizeof( unsigned ), bvh.triIdx );
+	tinyocl::Buffer triData( bvh.triCount * 3 * sizeof( tinybvh::bvhvec4 ), bvh.verts );
+	// synchronize the host-side data to the gpu side
 	gpuNodes.CopyToDevice();
+	idxData.CopyToDevice();
+	triData.CopyToDevice();
+	// create rays and send them to the gpu side
+	tinyocl::Buffer rayData( N * sizeof( tinybvh::Ray ), rays );
+	rayData.CopyToDevice();
+	// create an event to time the OpenCL kernel
+	cl_event event; 
+	cl_ulong startTime, endTime;
 	// start timer and start kernel on gpu
 	t.reset();
+	float traceTimeGPU = 0;
+	kernel.SetArguments( &gpuNodes, &idxData, &triData, &rayData );
 	for (int pass = 0; pass < 3; pass++)
 	{
-		kernel.SetArguments( &gpuNodes );
-		kernel.Run( 32 ); // for now, todo.
+		kernel.Run( N, 64, 0, &event ); // for now, todo.
+		clWaitForEvents(1, &event ); // OpenCL kernsl run asynchronously
+		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 ); 
+		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 ); 
+		traceTimeGPU += (endTime - startTime) * 1e-9f; // event timing is in nanoseconds
 	}
-	float traceTimeGPU = t.elapsed() / 3.0f;
+	// get results from GPU - this also syncs the queue.
+	rayData.CopyFromDevice();
+	// report on timing
+	traceTimeGPU /= 3.0f;
 	mrays = (float)N / traceTimeGPU;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
@@ -451,17 +468,17 @@ int main()
 		bvh.Build( triangles, verts / 3 ); // rebuild with full splitting.
 		bvh.Optimize( 1000000 );
 		bvh.MergeLeafs();
-		printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
-		bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
-		for (int i = 0; i < N; i += 2) bvh.Intersect( rays[i], BVH::ALT_SOA ); // re-warm
-		printf( "- CPU, coherent,   2-way optimized,    ST: " );
-		t.reset();
-		for (int pass = 0; pass < 3; pass++)
-			for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
-		float traceTimeOpt = t.elapsed() / 3.0f;
-		mrays = (float)N / traceTimeOpt;
-		printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeOpt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 	}
+	printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
+	for (int i = 0; i < N; i += 2) bvh.Intersect( rays[i], BVH::ALT_SOA ); // re-warm
+	printf( "- CPU, coherent,   2-way optimized,    ST: " );
+	t.reset();
+	for (int pass = 0; pass < 3; pass++)
+		for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
+	float traceTimeOpt = t.elapsed() / 3.0f;
+	mrays = (float)N / traceTimeOpt;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeOpt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -470,7 +487,7 @@ int main()
 	// trace all rays three times to estimate average performance
 	// - coherent, Embree, single-threaded
 	printf( "- CPU, coherent,   Embree BVH,  Embree ST: " );
-	struct RTCRayHit* rayhits = (RTCRayHit*)default_malloc( SCRWIDTH * SCRHEIGHT * 16 * sizeof( RTCRayHit ) );
+	struct RTCRayHit* rayhits = (RTCRayHit*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 16 * sizeof( RTCRayHit ) );
 	// copy our rays to Embree format
 	for (int i = 0; i < N; i++)
 	{
@@ -494,6 +511,7 @@ int main()
 	}
 	mrays = (float)N / traceTimeEmbree;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeEmbree * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	tinybvh::free64( rayhits );
 
 #endif
 
