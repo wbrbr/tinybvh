@@ -65,7 +65,7 @@ void Init()
 	s.seekp( 0 );
 	s.read( (char*)&verts, 4 );
 	printf( "Loading triangle data (%i tris).\n", verts );
-	verts *= 3, triangles = (bvhvec4*)ALIGNED_MALLOC( verts * 16 );
+	verts *= 3, triangles = (bvhvec4*)default_malloc( verts * 16 );
 	s.read( (char*)triangles, verts * 16 );
 #else
 	// generate a sphere flake scene
@@ -121,7 +121,7 @@ void Tick( uint32_t* buf )
 	// generate primary rays in a cacheline-aligned buffer - and, for data locality:
 	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
 	int N = 0;
-	Ray* rays = (Ray*)ALIGNED_MALLOC( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
+	Ray* rays = (Ray*)default_malloc( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
 	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
@@ -176,5 +176,5 @@ void Tick( uint32_t* buf )
 			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
 		}
 	}
-	ALIGNED_FREE( rays );
+	default_free( rays );
 }

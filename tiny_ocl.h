@@ -37,6 +37,44 @@ THE SOFTWARE.
 #include "cl.h"
 #include <vector>
 
+// aligned memory allocation
+// note: formally size needs to be a multiple of 'alignment'.
+// see https://en.cppreference.com/w/c/memory/aligned_alloc
+// EMSCRIPTEN enforces this.
+#define MAKE_MULIPLE_64( x ) ( ( ( x ) + 63 ) & ( ~0x3f ) )
+#ifdef _MSC_VER // Visual Studio / C11
+#include <malloc.h>
+#include <math.h> // for sqrtf, fabs
+#include <string.h> // for memset
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _aligned_malloc( ( MAKE_MULIPLE_64( x ) ), 64 ) )
+#define ALIGNED_FREE( x ) _aligned_free( x )
+#elif defined(__EMSCRIPTEN__) // EMSCRIPTEN - needs to be before gcc and clang to avoid misdetection
+#include <cstdlib>
+#include <cmath>
+#include <cstring>
+#if defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
+// https://emscripten.org/docs/porting/simd.html
+#include <xmmintrin.h>
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( x ), 64 ) )
+#define ALIGNED_FREE( x ) _mm_free( x )
+#else
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, MAKE_MULIPLE_64( x ) ) )
+#define ALIGNED_FREE( x ) free( x )
+#endif
+#else // gcc / clang
+#include <cstdlib>
+#include <cmath>
+#include <cstring>
+#if defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : _mm_malloc( ( MAKE_MULIPLE_64( x ) ), 64 ) )
+#define ALIGNED_FREE( x ) _mm_free( x )
+#else
+#define ALIGNED_MALLOC( x ) ( ( x ) == 0 ? 0 : aligned_alloc( 64, ( MAKE_MULIPLE_64( x ) ) ) )
+#define ALIGNED_FREE( x ) free( x )
+#endif
+#endif
+
 namespace tinyocl {
 
 // Math classes
