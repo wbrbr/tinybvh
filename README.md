@@ -45,7 +45,7 @@ The **performance measurement tool** use OpenMP and can be compiled with:
 
 ````g++ -std=c++20 -mavx -Ofast -fopenmp tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
-# Version 0.9.0
+# Version 0.9.1
 This version of the library includes the following functionality:
 * Binned SAH BVH builder
 * Fast binned SAH BVH builder using AVX intrinsics
@@ -57,6 +57,7 @@ This version of the library includes the following functionality:
 * Conversion of 4-wide BVH to GPU-friendly 64-byte quantized format
 * Single-ray and packet traversal
 * Support for WASM / EMSCRIPTEN, g++, clang, Visual Studio.
+* Optional user-defined allocation, by [Thierry Cantenot](https://github.com/tcantenot). 
 
 The current version of the library is rapidly gaining functionality. Please expect changes to the interface.
 
