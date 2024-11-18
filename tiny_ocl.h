@@ -287,7 +287,9 @@ public:
 
 #ifdef TINY_OCL_IMPLEMENTATION
 
+#ifdef _MSC_VER
 #pragma comment( lib, "../external/OpenCL/lib/OpenCL.lib" )
+#endif
 
 using namespace std;
 using namespace tinyocl;
@@ -300,10 +302,6 @@ using namespace tinyocl;
 #else
 #include <unistd.h>
 #endif
-
-// source file information
-static int sourceFiles = 0;
-static char* sourceFile[64]; // yup, ugly constant
 
 #define CHECKCL(r) CheckCL( r, __FILE__, __LINE__ )
 
@@ -889,7 +887,7 @@ bool Kernel::InitCL()
 	printf( "Local memory size: %iKB\n", (int)localMem >> 10 );
 	// digest device string
 	char* d = device_string;
-	for (int i = 0; i < strlen( d ); i++) if (d[i] >= 'A' && d[i] <= 'Z') d[i] -= 'A' - 'a';
+	for (int l = (int)strlen( d ), i = 0; i < l; i++) if (d[i] >= 'A' && d[i] <= 'Z') d[i] -= 'A' - 'a';
 	if (strstr( d, "nvidia" ))
 	{
 		isNVidia = true;
@@ -970,7 +968,7 @@ bool Kernel::InitCL()
 	queue2 = clCreateCommandQueueWithProperties( context, devices[deviceUsed], props, &error );
 	if (!CHECKCL( error )) return false;
 	// cleanup
-	delete devices;
+	delete[] devices;
 	clStarted = true;
 	return true;
 }
@@ -1013,7 +1011,7 @@ void Kernel::SetArgument( int idx, Buffer* buffer )
 }
 void Kernel::SetArgument( int idx, tinyocl::oclvec3 value )
 {
-	CheckCLStarted(); 
+	CheckCLStarted();
 	float tmp[4]{};
 	memcpy( tmp, &value, 12 );
 	clSetKernelArg( kernel, idx, 16, &tmp );
