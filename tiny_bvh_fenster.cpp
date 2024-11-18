@@ -121,7 +121,7 @@ void Tick( uint32_t* buf )
 	// generate primary rays in a cacheline-aligned buffer - and, for data locality:
 	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
 	int N = 0;
-	Ray* rays = (Ray*)default_aligned_malloc( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
+	Ray* rays = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
 	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
@@ -176,5 +176,5 @@ void Tick( uint32_t* buf )
 			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
 		}
 	}
-	default_aligned_free( rays );
+	tinybvh::free64( rays );
 }
