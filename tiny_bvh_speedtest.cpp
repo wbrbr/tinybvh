@@ -23,7 +23,7 @@
 #define TRAVERSE_2WAY_MT
 #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_2WAY_MT_DIVERGENT
-// #define TRAVERSE_OPTIMIZED_ST
+#define TRAVERSE_OPTIMIZED_ST
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
 
@@ -89,6 +89,21 @@ struct Timer
 	void reset() { start = std::chrono::high_resolution_clock::now(); }
 	std::chrono::high_resolution_clock::time_point start;
 };
+
+#if 0
+void dump_bitmap( Ray* rays )
+{
+	unsigned char pixel[SCRWIDTH * SCRHEIGHT]; float sum;
+	for (int s, x, y, i = 0, ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
+		for (y = 0; y < 4; y++) for (s = 0, x = 0; x < 4; x++)
+		{
+			for (s = 0, sum = 0; s < 16; s++, i++) sum += rays[i].hit.t == 1e30f ? 0 : rays[i].hit.t;
+			pixel[tx * 4 + x + (ty * 4 + y) * SCRWIDTH] = (unsigned char)((int)(sum * 0.01f) & 255);
+		}
+	FILE* f = fopen( "testimage.raw", "wb" );
+	fwrite( pixel, 1, SCRWIDTH * SCRHEIGHT, f ); // for debugging, forget fclose
+}
+#endif
 
 void sphere_flake( float x, float y, float z, float s, int d = 0 )
 {
@@ -306,7 +321,7 @@ int main()
 	printf( "- CPU, coherent,   basic 2-way layout, ST: " );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i += 8 ) bvh.Intersect( rays[i] );
+		for (int i = 0; i < N; i += 8) bvh.Intersect( rays[i] );
 	float traceTimeST = t.elapsed() / 3.0f;
 	mrays = (float)(N / 8) / traceTimeST;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeST * 1000, (float)(N / 8) * 1e-6f, mrays * 1e-6f );
@@ -347,7 +362,7 @@ int main()
 	tinyocl::Buffer rayData( N * sizeof( tinybvh::Ray ), rays );
 	rayData.CopyToDevice();
 	// create an event to time the OpenCL kernel
-	cl_event event; 
+	cl_event event;
 	cl_ulong startTime, endTime;
 	// start timer and start kernel on gpu
 	t.reset();
@@ -356,9 +371,9 @@ int main()
 	for (int pass = 0; pass < 8; pass++)
 	{
 		ailalaine_kernel.Run( N, 64, 0, &event ); // for now, todo.
-		clWaitForEvents(1, &event ); // OpenCL kernsl run asynchronously
-		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 ); 
-		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 ); 
+		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
+		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
+		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
 		traceTimeGPU += (endTime - startTime) * 1e-9f; // event timing is in nanoseconds
 	}
 	// get results from GPU - this also syncs the queue.
@@ -367,6 +382,7 @@ int main()
 	traceTimeGPU /= 8.0f;
 	mrays = (float)N / traceTimeGPU;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	dump_bitmap( rays );
 
 #endif
 
@@ -382,7 +398,7 @@ int main()
 	gpu4Nodes.CopyToDevice();
 #ifndef GPU_2WAY // otherwise these already exist.
 	// create an event to time the OpenCL kernel
-	cl_event event; 
+	cl_event event;
 	cl_ulong startTime, endTime;
 	// create rays and send them to the gpu side
 	tinyocl::Buffer rayData( N * sizeof( tinybvh::Ray ), rays );
@@ -395,9 +411,9 @@ int main()
 	for (int pass = 0; pass < 8; pass++)
 	{
 		gpu4way_kernel.Run( N, 64, 0, &event ); // for now, todo.
-		clWaitForEvents(1, &event ); // OpenCL kernsl run asynchronously
-		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 ); 
-		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 ); 
+		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
+		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
+		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
 		traceTimeGPU4 += (endTime - startTime) * 1e-9f; // event timing is in nanoseconds
 	}
 	// get results from GPU - this also syncs the queue.

@@ -1,7 +1,7 @@
 #include "external/fenster.h" // https://github.com/zserge/fenster
 
 // #define USE_EMBREE // enable to verify correct implementation, win64 only for now.
-// #define LOADSPONZA
+#define LOADSPONZA
 
 #define TINYBVH_IMPLEMENTATION
 #include "tiny_bvh.h"
@@ -65,7 +65,7 @@ void Init()
 	s.seekp( 0 );
 	s.read( (char*)&verts, 4 );
 	printf( "Loading triangle data (%i tris).\n", verts );
-	verts *= 3, triangles = (bvhvec4*)default_malloc( verts * 16 );
+	verts *= 3, triangles = (bvhvec4*)malloc64( verts * 16 );
 	s.read( (char*)triangles, verts * 16 );
 #else
 	// generate a sphere flake scene
@@ -95,6 +95,7 @@ void Init()
 	// build a BVH over the scene
 #if defined(BVH_USEAVX)
 	bvh.BuildAVX( triangles, verts / 3 );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::AILA_LAINE );
 #elif defined(BVH_USENEON)
 	bvh.BuildNEON( triangles, verts / 3 );
 #else
@@ -152,7 +153,7 @@ void Tick( uint32_t* buf )
 		rays[i].hit.prim = rayhit.hit.primID, rays[i].hit.t = rayhit.ray.tfar;
 	}
 #else
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::AILA_LAINE );
 #endif
 
 	// visualize result

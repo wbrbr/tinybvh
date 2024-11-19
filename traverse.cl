@@ -23,8 +23,8 @@ void kernel traverse_ailalaine( global struct BVHNodeAlt* altNode, global unsign
 	const float3 O = rayData[threadId].O.xyz;
 	const float3 D = rayData[threadId].D.xyz;
 	const float3 rD = rayData[threadId].rD.xyz;
-	float t = 1e30f; // ignoring value set in ray to spare one memory transaction.
 	float4 hit;
+	hit.x = 1e30f; // ignoring value set in ray to spare one memory transaction.
 	// traverse BVH
 	unsigned node = 0, stack[64], stackPtr = 0;
 	while (1)
@@ -49,12 +49,12 @@ void kernel traverse_ailalaine( global struct BVHNodeAlt* altNode, global unsign
 				const float f = 1 / a;
 				const float3 s = O - tri[0].xyz;
 				const float u = f * dot( s, h );
-				if (u < 0 && u > 1) continue;
+				if (u < 0 || u > 1) continue;
 				const float3 q = cross( s, edge1.xyz );
 				const float v = f * dot( D, q );
-				if (v < 0 && u + v > 1) continue;
+				if (v < 0 || u + v > 1) continue;
 				const float d = f * dot( edge2.xyz, q );
-				if (d > 0.0f && d < t) hit = (float4)(t = d, u, v, as_float( triIdx ));
+				if (d > 0.0f && d < hit.x) hit = (float4)(d, u, v, as_float( triIdx ));
 			}
 			if (stackPtr == 0) break;
 			node = stack[--stackPtr];
@@ -68,8 +68,8 @@ void kernel traverse_ailalaine( global struct BVHNodeAlt* altNode, global unsign
 		const float3 mintb = fmin( t1b, t2b ), maxtb = fmax( t1b, t2b );
 		const float tmina = fmax( fmax( fmax( minta.x, minta.y ), minta.z ), 0 );
 		const float tminb = fmax( fmax( fmax( mintb.x, mintb.y ), mintb.z ), 0 );
-		const float tmaxa = fmin( fmin( fmin( maxta.x, maxta.y ), maxta.z ), t );
-		const float tmaxb = fmin( fmin( fmin( maxtb.x, maxtb.y ), maxtb.z ), t );
+		const float tmaxa = fmin( fmin( fmin( maxta.x, maxta.y ), maxta.z ), hit.x );
+		const float tmaxb = fmin( fmin( fmin( maxtb.x, maxtb.y ), maxtb.z ), hit.x );
 		float dist1 = tmina > tmaxa ? 1e30f : tmina;
 		float dist2 = tminb > tmaxb ? 1e30f : tminb;
 		// traverse nearest child first
