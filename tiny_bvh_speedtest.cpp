@@ -154,7 +154,8 @@ int main()
 
 	// load and compile the OpenCL kernel code
 	// This also triggers OpenCL init and device identification.
-	tinyocl::Kernel kernel( "traverse.cl", "traverse" );
+	tinyocl::Kernel ailalaine_kernel( "traverse.cl", "traverse_ailalaine" );
+	tinyocl::Kernel gpu4way_kernel( "traverse.cl", "traverse_gpu4way" );
 	printf( "----------------------------------------------------------------\n" );
 
 #endif
@@ -335,7 +336,7 @@ int main()
 	printf( "- GPU, coherent,   alt 2-way layout,  ocl: " );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::AILA_LAINE );
 	// create OpenCL buffers for the BVH data calculated by tiny_bvh.h
-	tinyocl::Buffer gpuNodes( bvh.usedBVHNodes * sizeof( BVH::BVHNodeAlt ), bvh.altNode );
+	tinyocl::Buffer gpuNodes( bvh.usedAltNodes * sizeof( BVH::BVHNodeAlt ), bvh.altNode );
 	tinyocl::Buffer idxData( bvh.idxCount * sizeof( unsigned ), bvh.triIdx );
 	tinyocl::Buffer triData( bvh.triCount * 3 * sizeof( tinybvh::bvhvec4 ), bvh.verts );
 	// synchronize the host-side data to the gpu side
@@ -351,10 +352,10 @@ int main()
 	// start timer and start kernel on gpu
 	t.reset();
 	float traceTimeGPU = 0;
-	kernel.SetArguments( &gpuNodes, &idxData, &triData, &rayData );
-	for (int pass = 0; pass < 3; pass++)
+	ailalaine_kernel.SetArguments( &gpuNodes, &idxData, &triData, &rayData );
+	for (int pass = 0; pass < 8; pass++)
 	{
-		kernel.Run( N, 64, 0, &event ); // for now, todo.
+		ailalaine_kernel.Run( N, 64, 0, &event ); // for now, todo.
 		clWaitForEvents(1, &event ); // OpenCL kernsl run asynchronously
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 ); 
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 ); 
@@ -363,9 +364,48 @@ int main()
 	// get results from GPU - this also syncs the queue.
 	rayData.CopyFromDevice();
 	// report on timing
-	traceTimeGPU /= 3.0f;
+	traceTimeGPU /= 8.0f;
 	mrays = (float)N / traceTimeGPU;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
+
+#ifdef GPU_4WAY
+
+	// trace the rays on GPU using OpenCL
+	printf( "- GPU, coherent,   alt 4-way layout,  ocl: " );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH4 );
+	bvh.Convert( BVH::BASIC_BVH4, BVH::BVH4_GPU );
+	// create OpenCL buffers for the BVH data calculated by tiny_bvh.h
+	tinyocl::Buffer gpu4Nodes( bvh.usedAlt4Blocks * sizeof( tinybvh::bvhvec4 ), bvh.bvh4Alt );
+	// synchronize the host-side data to the gpu side
+	gpu4Nodes.CopyToDevice();
+#ifndef GPU_2WAY // otherwise these already exist.
+	// create an event to time the OpenCL kernel
+	cl_event event; 
+	cl_ulong startTime, endTime;
+	// create rays and send them to the gpu side
+	tinyocl::Buffer rayData( N * sizeof( tinybvh::Ray ), rays );
+	rayData.CopyToDevice();
+#endif
+	// start timer and start kernel on gpu
+	t.reset();
+	float traceTimeGPU4 = 0;
+	gpu4way_kernel.SetArguments( &gpu4Nodes, &rayData );
+	for (int pass = 0; pass < 8; pass++)
+	{
+		gpu4way_kernel.Run( N, 64, 0, &event ); // for now, todo.
+		clWaitForEvents(1, &event ); // OpenCL kernsl run asynchronously
+		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 ); 
+		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 ); 
+		traceTimeGPU4 += (endTime - startTime) * 1e-9f; // event timing is in nanoseconds
+	}
+	// get results from GPU - this also syncs the queue.
+	rayData.CopyFromDevice();
+	// report on timing
+	traceTimeGPU4 /= 8.0f;
+	mrays = (float)N / traceTimeGPU4;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU4 * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
