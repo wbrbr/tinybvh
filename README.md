@@ -72,7 +72,6 @@ Plans:
   * Experiment with 4-wide layouts
   * Reverse-engineer Embree & PhysX
 * OpenCL traversal example
-  * BVH4_GPU traversal
   * Efficient CWBVH GPU traversal
 * TLAS/BLAS traversal with BLAS transforms
 * Example renderers:
