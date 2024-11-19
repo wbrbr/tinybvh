@@ -1,28 +1,37 @@
 // gpu-side code for ray traversal
 
-// Note: We are taking in nodes and rays as collection of floa4's here.
-// You can use structs in OpenCL, which will be more convenient and
-// clear here. Be careful though: float3 / int3 struct members are padded 
-// to 16 bytes in OpenCL.
+struct Ray
+{
+	// data is defined here as 16-byte values to encourage the compilers
+	// to fetch 16 bytes at a time: 12 (so, 8 + 4) will be slower.
+	float4 O, D, rD; // 48 byte
+	float4 hit; // 16 byte
+};
 
-void kernel traverse( global float4* bvhNode, global unsigned* idx, global float4* verts, global float4* rayData )
+struct BVHNodeAlt
+{
+	float4 lmin; // unsigned left in w
+	float4 lmax; // unsigned right in w
+	float4 rmin; // unsigned triCount in w
+	float4 rmax; // unsigned firstTri in w
+};
+
+void kernel traverse( global struct BVHNodeAlt* altNode, global unsigned* idx, global float4* verts, global struct Ray* rayData )
 {
 	// fetch ray
-	unsigned threadId = get_global_id( 0 );
-	float3 O = rayData[threadId * 4 + 0].xyz;
-	float3 D = rayData[threadId * 4 + 1].xyz;
-	float3 rD = rayData[threadId * 4 + 2].xyz;
-	float4 hit = rayData[threadId * 4 + 3];
-	hit.x = 1e30f;
+	const unsigned threadId = get_global_id( 0 );
+	const float3 O = rayData[threadId].O.xyz;
+	const float3 D = rayData[threadId].D.xyz;
+	const float3 rD = rayData[threadId].rD.xyz;
+	float t = 1e30f; // ignoring value set in ray to spare one memory transaction.
+	float4 hit;
 	// traverse BVH
 	unsigned node = 0, stack[64], stackPtr = 0;
 	while (1)
 	{
 		// fetch the node
-		const float4 lmin = bvhNode[node * 4 + 0];
-		const float4 lmax = bvhNode[node * 4 + 1];
-		const float4 rmin = bvhNode[node * 4 + 2];
-		const float4 rmax = bvhNode[node * 4 + 3];
+		const float4 lmin = altNode[node].lmin, lmax = altNode[node].lmax;
+		const float4 rmin = altNode[node].rmin, rmax = altNode[node].rmax;
 		const unsigned triCount = as_uint( rmin.w );
 		if (triCount > 0)
 		{
@@ -32,27 +41,20 @@ void kernel traverse( global float4* bvhNode, global unsigned* idx, global float
 			{
 				const unsigned triIdx = idx[firstTri + i];
 				const float4* tri = verts + 3 * triIdx;
-				// triangle intersection
+				// triangle intersection - Möller-Trumbore
 				const float4 edge1 = tri[1] - tri[0], edge2 = tri[2] - tri[0];
 				const float3 h = cross( D, edge2.xyz );
 				const float a = dot( edge1.xyz, h );
-				if (fabs( a ) >= 0.0000001f)
-				{
-					const float f = 1 / a;
-					const float3 s = O - tri[0].xyz;
-					const float u = f * dot( s, h );
-					if (u >= 0 && u <= 1)
-					{
-						const float3 q = cross( s, edge1.xyz );
-						const float v = f * dot( D, q );
-						if (v >= 0 && u + v <= 1)
-						{
-							const float d = f * dot( edge2.xyz, q );
-							if (d > 0.0f && d < hit.x /* i.e., ray.t */)
-								hit = (float4)(d, u, v, as_float( triIdx ));
-						}
-					}
-				}
+				if (fabs( a ) < 0.0000001f) continue;
+				const float f = 1 / a;
+				const float3 s = O - tri[0].xyz;
+				const float u = f * dot( s, h );
+				if (u < 0 && u > 1) continue;
+				const float3 q = cross( s, edge1.xyz );
+				const float v = f * dot( D, q );
+				if (v < 0 && u + v > 1) continue;
+				const float d = f * dot( edge2.xyz, q );
+				if (d > 0.0f && d < t) hit = (float4)(t = d, u, v, as_float( triIdx ));
 			}
 			if (stackPtr == 0) break;
 			node = stack[--stackPtr];
@@ -66,8 +68,8 @@ void kernel traverse( global float4* bvhNode, global unsigned* idx, global float
 		const float3 mintb = fmin( t1b, t2b ), maxtb = fmax( t1b, t2b );
 		const float tmina = fmax( fmax( fmax( minta.x, minta.y ), minta.z ), 0 );
 		const float tminb = fmax( fmax( fmax( mintb.x, mintb.y ), mintb.z ), 0 );
-		const float tmaxa = fmin( fmin( fmin( maxta.x, maxta.y ), maxta.z ), hit.x );
-		const float tmaxb = fmin( fmin( fmin( maxtb.x, maxtb.y ), maxtb.z ), hit.x );
+		const float tmaxa = fmin( fmin( fmin( maxta.x, maxta.y ), maxta.z ), t );
+		const float tmaxb = fmin( fmin( fmin( maxtb.x, maxtb.y ), maxtb.z ), t );
 		float dist1 = tmina > tmaxa ? 1e30f : tmina;
 		float dist2 = tminb > tmaxb ? 1e30f : tminb;
 		// traverse nearest child first
@@ -87,5 +89,5 @@ void kernel traverse( global float4* bvhNode, global unsigned* idx, global float
 		}
 	}
 	// write back intersection result
-	rayData[threadId * 4 + 3] = hit;
+	rayData[threadId].hit = hit;
 }

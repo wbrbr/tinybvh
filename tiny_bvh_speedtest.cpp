@@ -7,7 +7,7 @@
 #define SCRHEIGHT	600
 
 // scene selection
-// #define LOADSPONZA
+#define LOADSPONZA
 
 // GPU ray tracing
 #define ENABLE_OPENCL
@@ -23,7 +23,7 @@
 #define TRAVERSE_2WAY_MT
 #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_2WAY_MT_DIVERGENT
-#define TRAVERSE_OPTIMIZED_ST
+// #define TRAVERSE_OPTIMIZED_ST
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
 
@@ -305,10 +305,10 @@ int main()
 	printf( "- CPU, coherent,   basic 2-way layout, ST: " );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
+		for (int i = 0; i < N; i += 8 ) bvh.Intersect( rays[i] );
 	float traceTimeST = t.elapsed() / 3.0f;
-	mrays = (float)N / traceTimeST;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeST * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)(N / 8) / traceTimeST;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeST * 1000, (float)(N / 8) * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -320,10 +320,10 @@ int main()
 	bvh.Convert( BVH::WALD_32BYTE, BVH::AILA_LAINE );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::AILA_LAINE );
+		for (int i = 0; i < N; i += 8) bvh.Intersect( rays[i], BVH::AILA_LAINE );
 	float traceTimeAlt = t.elapsed() / 3.0f;
-	mrays = (float)N / traceTimeAlt;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)(N / 8) / traceTimeAlt;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt * 1000, (float)(N / 8) * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -379,10 +379,10 @@ int main()
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
+		for (int i = 0; i < N; i += 8) bvh.Intersect( rays[i], BVH::ALT_SOA );
 	float traceTimeAlt2 = t.elapsed() / 3.0f;
-	mrays = (float)N / traceTimeAlt2;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt2 * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)(N / 8) / traceTimeAlt2;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt2 * 1000, (float)(N / 8) * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -475,10 +475,10 @@ int main()
 	printf( "- CPU, coherent,   2-way optimized,    ST: " );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::ALT_SOA );
+		for (int i = 0; i < N; i += 8) bvh.Intersect( rays[i], BVH::ALT_SOA );
 	float traceTimeOpt = t.elapsed() / 3.0f;
-	mrays = (float)N / traceTimeOpt;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeOpt * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)(N / 8) / traceTimeOpt;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeOpt * 1000, (float)(N / 8) * 1e-6f, mrays * 1e-6f );
 
 #endif
 
