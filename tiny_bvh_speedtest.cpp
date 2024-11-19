@@ -382,7 +382,6 @@ int main()
 	traceTimeGPU /= 8.0f;
 	mrays = (float)N / traceTimeGPU;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU * 1000, (float)N * 1e-6f, mrays * 1e-6f );
-	dump_bitmap( rays );
 
 #endif
 
