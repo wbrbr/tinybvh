@@ -52,7 +52,7 @@ inline uint __popc( const uint v ) // OpenCL alternative for CUDA's native __bfi
 
 inline float _native_fma( const float a, const float b, const float c )
 {
-#ifdef _ISNVIDIA
+#ifdef ISNVIDIA
 	float d;
 	asm volatile("fma.rz.f32 %0, %1, %2, %3;" : "=f"(d) : "f"(a), "f"(b), "f"(c));
 	return d;
