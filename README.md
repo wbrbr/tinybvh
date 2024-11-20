@@ -69,6 +69,7 @@ Plans, ordered by priority:
   * GPU path tracer
   * GPU wavefront path tracer
 * TLAS/BLAS traversal with BLAS transforms
+  * Part of this: Build BVH over list of AABBs rather than tris
 * BVH::Optimize:
   * Properly use C_trav and C_int for SAH **_(done)_**
   * Faster Optimize algorithm (complete paper implementation)
