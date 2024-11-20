@@ -50,6 +50,21 @@ inline uint __popc( const uint v ) // OpenCL alternative for CUDA's native __bfi
 #endif
 }
 
+inline float _native_fma( const float a, const float b, const float c )
+{
+#ifdef _ISNVIDIA
+	float d;
+	asm volatile("fma.rz.f32 %0, %1, %2, %3;" : "=f"(d) : "f"(a), "f"(b), "f"(c));
+	return d;
+#else
+#ifdef FP_FAST_FMAF // https://registry.khronos.org/OpenCL/specs/3.0-unified/html/OpenCL_C.html
+	return fma( a, b, c );
+#else
+	return a * b + c;
+#endif
+#endif
+}
+
 // ============================================================================
 //
 //        T R A V E R S E _ A I L A L A I N E
