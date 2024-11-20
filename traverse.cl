@@ -291,7 +291,7 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 // #define SIMD_AABBTEST
 #elif defined ISAMD
 #define USE_VLOAD_VSTORE
-#define SIMD_AABBTEST
+// #define SIMD_AABBTEST
 #else // unkown GPU
 // #define USE_VLOAD_VSTORE
 #define SIMD_AABBTEST
