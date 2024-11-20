@@ -65,6 +65,25 @@ inline float _native_fma( const float a, const float b, const float c )
 #endif
 }
 
+inline float fmin_fmin( const float a, const float b, const float c )
+{
+#if defined( ISNVIDIA ) && defined( ISPASCAL )
+	// not a win on Turing
+	return as_float( min_min( as_int( a ), as_int( b ), as_int( c ) ) );
+#else
+	return fmin( fmin( a, b ), c );
+#endif
+}
+
+inline float fmax_fmax( const float a, const float b, const float c )
+{
+#if defined( ISNVIDIA ) && defined( ISPASCAL )
+	return as_float( max_max( as_int( a ), as_int( b ), as_int( c ) ) );
+#else
+	return fmax( fmax( a, b ), c );
+#endif
+}
+
 // ============================================================================
 //
 //        T R A V E R S E _ A I L A L A I N E
@@ -273,8 +292,9 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 #elif defined ISAMD
 #define USE_VLOAD_VSTORE
 #define SIMD_AABBTEST
-#else  // ARM, .. : untested
-
+#else // unkown GPU
+// #define USE_VLOAD_VSTORE
+#define SIMD_AABBTEST
 #endif
 
 #ifdef USE_VLOAD_VSTORE
