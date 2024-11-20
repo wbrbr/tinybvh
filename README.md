@@ -62,8 +62,13 @@ This version of the library includes the following functionality:
 
 The current version of the library is rapidly gaining functionality. Please expect changes to the interface.
 
-Plans:
+Plans, ordered by priority:
 
+* Example renderers:
+  * CPU WHitted-style ray tracer
+  * GPU path tracer
+  * GPU wavefront path tracer
+* TLAS/BLAS traversal with BLAS transforms
 * BVH::Optimize:
   * Properly use C_trav and C_int for SAH **_(done)_**
   * Faster Optimize algorithm (complete paper implementation)
@@ -71,13 +76,6 @@ Plans:
 * CPU single-ray performance
   * Experiment with 4-wide layouts
   * Reverse-engineer Embree & PhysX
-* OpenCL traversal example
-  * Efficient CWBVH GPU traversal
-* TLAS/BLAS traversal with BLAS transforms
-* Example renderers:
-  * CPU WHitted-style ray tracer
-  * GPU path tracer
-  * GPU wavefront path tracer
   
 These features have already been completed but need polishing and adapting to the interface, once it is settled. CWBVH GPU traversal combined with an optimized SBVH provides state-of-the-art **#RTXOff** performance; expect _billions of rays per second_.
 
