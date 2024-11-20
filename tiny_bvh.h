@@ -22,6 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+// Nov 20, '24: version 0.9.5 : CWBVH traversal on GPU.
+// Nov 19, '24: version 0.9.2 : 4-way traversal on GPU.
 // Nov 18, '24: version 0.9.1 : Added custom alloc/free (tcantenot).
 // Mov 16, '24: version 0.9.0 : (external) OpenCL in speedtest.
 // Nov 15, '24: version 0.8.3 : Incremental update / bugfixes.
@@ -69,6 +71,7 @@ THE SOFTWARE.
 // Aras Pranckevičius: non-Intel architecture support
 // Jefferson Amstutz: CMake surpport
 // Christian Oliveros: WASM / EMSCRIPTEN support
+// Thierry Cantenot: user-defined alloc & free
 
 #ifndef TINY_BVH_H_
 #define TINY_BVH_H_
@@ -96,7 +99,7 @@ THE SOFTWARE.
 // library version
 #define TINY_BVH_VERSION_MAJOR	0
 #define TINY_BVH_VERSION_MINOR	9
-#define TINY_BVH_VERSION_SUB	3
+#define TINY_BVH_VERSION_SUB	5
 
 // ============================================================================
 //

@@ -171,6 +171,7 @@ int main()
 	// This also triggers OpenCL init and device identification.
 	tinyocl::Kernel ailalaine_kernel( "traverse.cl", "traverse_ailalaine" );
 	tinyocl::Kernel gpu4way_kernel( "traverse.cl", "traverse_gpu4way" );
+	tinyocl::Kernel cwbvh_kernel( "traverse.cl", "traverse_cwbvh" );
 	printf( "----------------------------------------------------------------\n" );
 
 #endif
@@ -421,6 +422,48 @@ int main()
 	traceTimeGPU4 /= 8.0f;
 	mrays = (float)N / traceTimeGPU4;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU4 * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+
+#endif
+
+#ifdef GPU_CWBVH
+
+	// trace the rays on GPU using OpenCL
+	printf( "- GPU, coherent,   CWBVH layout,      " );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH8 );
+	bvh.Convert( BVH::BASIC_BVH8, BVH::CWBVH );
+	printf( "ocl: " );
+	// create OpenCL buffers for the BVH data calculated by tiny_bvh.h
+	tinyocl::Buffer cwbvhNodes( bvh.usedCWBVHBlocks * sizeof( tinybvh::bvhvec4 ), bvh.bvh8Compact );
+	tinyocl::Buffer cwbvhTris( bvh.idxCount * 3 * sizeof( tinybvh::bvhvec4 ), bvh.bvh8Tris );
+	// synchronize the host-side data to the gpu side
+	cwbvhNodes.CopyToDevice();
+	cwbvhTris.CopyToDevice();
+#if !defined GPU_2WAY && !defined GPU_4WAY // otherwise these already exist.
+	// create an event to time the OpenCL kernel
+	cl_event event;
+	cl_ulong startTime, endTime;
+	// create rays and send them to the gpu side
+	tinyocl::Buffer rayData( N * sizeof( tinybvh::Ray ), rays );
+	rayData.CopyToDevice();
+#endif
+	// start timer and start kernel on gpu
+	t.reset();
+	float traceTimeGPU8 = 0;
+	cwbvh_kernel.SetArguments( &cwbvhNodes, &cwbvhTris, &rayData );
+	for (int pass = 0; pass < 8; pass++)
+	{
+		cwbvh_kernel.Run( N, 64, 0, &event ); // for now, todo.
+		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
+		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
+		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
+		traceTimeGPU8 += (endTime - startTime) * 1e-9f; // event timing is in nanoseconds
+	}
+	// get results from GPU - this also syncs the queue.
+	rayData.CopyFromDevice();
+	// report on timing
+	traceTimeGPU8 /= 8.0f;
+	mrays = (float)N / traceTimeGPU8;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU8 * 1000, (float)N * 1e-6f, mrays * 1e-6f );
 
 #endif
 
