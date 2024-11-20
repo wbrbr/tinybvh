@@ -267,12 +267,14 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 #ifdef ISINTEL // Iris Xe, Arc, ..
 // #define USE_VLOAD_VSTORE
 #define SIMD_AABBTEST
-#elif define ISNVIDIA // 2080, 3080, 4080, ..
+#elif defined ISNVIDIA // 2080, 3080, 4080, ..
 #define USE_VLOAD_VSTORE
 // #define SIMD_AABBTEST
-#else // AMD, .. : untested
+#elif defined ISAMD
 #define USE_VLOAD_VSTORE
 #define SIMD_AABBTEST
+#else  // ARM, .. : untested
+
 #endif
 
 #ifdef USE_VLOAD_VSTORE
