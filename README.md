@@ -73,9 +73,6 @@ The current version of the library is rapidly gaining functionality. Please expe
 
 Plans, ordered by priority:
 
-* Interface:
-  * Shadow ray queries
-  * Large batch query (Optix-style)
 * Documentation:
   * Wiki
   * Article on architecture and intended use
