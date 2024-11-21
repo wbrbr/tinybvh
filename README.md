@@ -67,6 +67,9 @@ Plans, ordered by priority:
 * Interface:
   * Shadow ray queries
   * Large batch query (Optix-style)
+* Documentation:
+  * Wiki
+  * Article on architecture and intended use
 * Example renderers:
   * CPU WHitted-style ray tracer
   * GPU path tracer
