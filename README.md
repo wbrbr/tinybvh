@@ -64,6 +64,9 @@ The current version of the library is rapidly gaining functionality. Please expe
 
 Plans, ordered by priority:
 
+* Interface:
+  * Shadow ray queries
+  * Large batch query (Optix-style)
 * Example renderers:
   * CPU WHitted-style ray tracer
   * GPU path tracer
