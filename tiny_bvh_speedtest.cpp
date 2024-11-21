@@ -24,8 +24,8 @@
 #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_2WAY_MT_DIVERGENT
 #define TRAVERSE_OPTIMIZED_ST
-// #define EMBREE_BUILD // win64-only for now.
-// #define EMBREE_TRAVERSE // win64-only for now.
+#define EMBREE_BUILD // win64-only for now.
+#define EMBREE_TRAVERSE // win64-only for now.
 
 // GPU rays: only if ENABLE_OPENCL is defined.
 #define GPU_2WAY
@@ -205,8 +205,9 @@ int main()
 
 	// generate primary rays in a cacheline-aligned buffer - and, for data locality:
 	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
-	int N = 0;
-	Ray* rays = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
+	int Nfull = 0, Nsmall = 0;
+	Ray* fullBatch = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
+	Ray* smallBatch = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 2 * sizeof( Ray ) );
 	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
@@ -218,7 +219,8 @@ int main()
 				float u = (float)(pixel_x * 4 + (s & 3)) / (SCRWIDTH * 4);
 				float v = (float)(pixel_y * 4 + (s >> 2)) / (SCRHEIGHT * 4);
 				bvhvec3 P = p1 + u * (p2 - p1) + v * (p3 - p1);
-				rays[N++] = Ray( eye, normalize( P - eye ) );
+				fullBatch[Nfull++] = Ray( eye, normalize( P - eye ) );
+				if ((s & 7) == 0) smallBatch[Nsmall++] = fullBatch[Nfull - 1];
 			}
 		}
 	}
@@ -322,10 +324,10 @@ int main()
 	printf( "- CPU, coherent,   basic 2-way layout, ST: " );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i += 8) bvh.Intersect( rays[i] );
+		for (int i = 0; i < Nsmall; i++) bvh.Intersect( smallBatch[i] );
 	float traceTimeST = t.elapsed() / 3.0f;
-	mrays = (float)(N / 8) / traceTimeST;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeST * 1000, (float)(N / 8) * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nsmall / traceTimeST;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeST * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -337,10 +339,10 @@ int main()
 	bvh.Convert( BVH::WALD_32BYTE, BVH::AILA_LAINE );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i += 8) bvh.Intersect( rays[i], BVH::AILA_LAINE );
+		for (int i = 0; i < Nsmall; i++) bvh.Intersect( smallBatch[i], BVH::AILA_LAINE );
 	float traceTimeAlt = t.elapsed() / 3.0f;
-	mrays = (float)(N / 8) / traceTimeAlt;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt * 1000, (float)(N / 8) * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nsmall / traceTimeAlt;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -360,7 +362,7 @@ int main()
 	idxData.CopyToDevice();
 	triData.CopyToDevice();
 	// create rays and send them to the gpu side
-	tinyocl::Buffer rayData( N * sizeof( tinybvh::Ray ), rays );
+	tinyocl::Buffer rayData( Nfull * sizeof( tinybvh::Ray ), fullBatch );
 	rayData.CopyToDevice();
 	// create an event to time the OpenCL kernel
 	cl_event event;
@@ -371,7 +373,7 @@ int main()
 	ailalaine_kernel.SetArguments( &gpuNodes, &idxData, &triData, &rayData );
 	for (int pass = 0; pass < 8; pass++)
 	{
-		ailalaine_kernel.Run( N, 64, 0, &event ); // for now, todo.
+		ailalaine_kernel.Run( Nfull, 64, 0, &event ); // for now, todo.
 		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
@@ -381,8 +383,8 @@ int main()
 	rayData.CopyFromDevice();
 	// report on timing
 	traceTimeGPU /= 8.0f;
-	mrays = (float)N / traceTimeGPU;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nfull / traceTimeGPU;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU * 1000, (float)Nfull * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -401,7 +403,7 @@ int main()
 	cl_event event;
 	cl_ulong startTime, endTime;
 	// create rays and send them to the gpu side
-	tinyocl::Buffer rayData( N * sizeof( tinybvh::Ray ), rays );
+	tinyocl::Buffer rayData( Nfull * sizeof( tinybvh::Ray ), fullBatch );
 	rayData.CopyToDevice();
 #endif
 	// start timer and start kernel on gpu
@@ -410,7 +412,7 @@ int main()
 	gpu4way_kernel.SetArguments( &gpu4Nodes, &rayData );
 	for (int pass = 0; pass < 8; pass++)
 	{
-		gpu4way_kernel.Run( N, 64, 0, &event ); // for now, todo.
+		gpu4way_kernel.Run( Nfull, 64, 0, &event ); // for now, todo.
 		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
@@ -420,8 +422,8 @@ int main()
 	rayData.CopyFromDevice();
 	// report on timing
 	traceTimeGPU4 /= 8.0f;
-	mrays = (float)N / traceTimeGPU4;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU4 * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nfull / traceTimeGPU4;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU4 * 1000, (float)Nfull * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -443,7 +445,7 @@ int main()
 	cl_event event;
 	cl_ulong startTime, endTime;
 	// create rays and send them to the gpu side
-	tinyocl::Buffer rayData( N * sizeof( tinybvh::Ray ), rays );
+	tinyocl::Buffer rayData( Nfull * sizeof( tinybvh::Ray ), fullBatch );
 	rayData.CopyToDevice();
 #endif
 	// start timer and start kernel on gpu
@@ -452,7 +454,7 @@ int main()
 	cwbvh_kernel.SetArguments( &cwbvhNodes, &cwbvhTris, &rayData );
 	for (int pass = 0; pass < 8; pass++)
 	{
-		cwbvh_kernel.Run( N, 64, 0, &event ); // for now, todo.
+		cwbvh_kernel.Run( Nfull, 64, 0, &event ); // for now, todo.
 		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
@@ -462,8 +464,8 @@ int main()
 	rayData.CopyFromDevice();
 	// report on timing
 	traceTimeGPU8 /= 8.0f;
-	mrays = (float)N / traceTimeGPU8;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU8 * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nfull / traceTimeGPU8;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeGPU8 * 1000, (float)Nfull * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -477,10 +479,10 @@ int main()
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i += 8) bvh.Intersect( rays[i], BVH::ALT_SOA );
+		for (int i = 0; i < Nsmall; i++) bvh.Intersect( smallBatch[i], BVH::ALT_SOA );
 	float traceTimeAlt2 = t.elapsed() / 3.0f;
-	mrays = (float)(N / 8) / traceTimeAlt2;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt2 * 1000, (float)(N / 8) * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nsmall / traceTimeAlt2;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt2 * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -492,17 +494,17 @@ int main()
 	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
-		const int batchCount = N / 10000;
+		const int batchCount = Nfull / 10000;
 	#pragma omp parallel for schedule(dynamic)
 		for (int batch = 0; batch < batchCount; batch++)
 		{
 			const int batchStart = batch * 10000;
-			for (int i = 0; i < 10000; i++) bvh.Intersect( rays[batchStart + i] );
+			for (int i = 0; i < 10000; i++) bvh.Intersect( fullBatch[batchStart + i] );
 		}
 	}
 	float traceTimeMT = t.elapsed() / 3.0f;
-	mrays = (float)N / traceTimeMT;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMT * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nfull / traceTimeMT;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMT * 1000, (float)Nfull * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -514,17 +516,17 @@ int main()
 	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
-		const int batchCount = N / (30 * 256); // batches of 30 packets of 256 rays
+		const int batchCount = Nfull / (30 * 256); // batches of 30 packets of 256 rays
 	#pragma omp parallel for schedule(dynamic)
 		for (int batch = 0; batch < batchCount; batch++)
 		{
 			const int batchStart = batch * 30 * 256;
-			for (int i = 0; i < 30; i++) bvh.Intersect256Rays( rays + batchStart + i * 256 );
+			for (int i = 0; i < 30; i++) bvh.Intersect256Rays( fullBatch + batchStart + i * 256 );
 		}
 	}
 	float traceTimeMTP = t.elapsed() / 3.0f;
-	mrays = (float)N / traceTimeMTP;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMTP * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nfull / traceTimeMTP;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMTP * 1000, (float)Nfull * 1e-6f, mrays * 1e-6f );
 
 #ifdef BVH_USEAVX
 
@@ -534,17 +536,17 @@ int main()
 	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
-		const int batchCount = N / (30 * 256); // batches of 30 packets of 256 rays
+		const int batchCount = Nfull / (30 * 256); // batches of 30 packets of 256 rays
 	#pragma omp parallel for schedule(dynamic)
 		for (int batch = 0; batch < batchCount; batch++)
 		{
 			const int batchStart = batch * 30 * 256;
-			for (int i = 0; i < 30; i++) bvh.Intersect256RaysSSE( rays + batchStart + i * 256 );
+			for (int i = 0; i < 30; i++) bvh.Intersect256RaysSSE( fullBatch + batchStart + i * 256 );
 		}
 	}
 	float traceTimeMTPS = t.elapsed() / 3.0f;
-	mrays = (float)N / traceTimeMTPS;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMTPS * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nfull / traceTimeMTPS;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMTPS * 1000, (float)Nfull * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -569,14 +571,13 @@ int main()
 	}
 	printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
-	for (int i = 0; i < N; i += 2) bvh.Intersect( rays[i], BVH::ALT_SOA ); // re-warm
 	printf( "- CPU, coherent,   2-way optimized,    ST: " );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i += 8) bvh.Intersect( rays[i], BVH::ALT_SOA );
+		for (int i = 0; i < Nsmall; i++) bvh.Intersect( smallBatch[i], BVH::ALT_SOA );
 	float traceTimeOpt = t.elapsed() / 3.0f;
-	mrays = (float)(N / 8) / traceTimeOpt;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeOpt * 1000, (float)(N / 8) * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nsmall / traceTimeOpt;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeOpt * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
 
 #endif
 
@@ -587,28 +588,28 @@ int main()
 	printf( "- CPU, coherent,   Embree BVH,  Embree ST: " );
 	struct RTCRayHit* rayhits = (RTCRayHit*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 16 * sizeof( RTCRayHit ) );
 	// copy our rays to Embree format
-	for (int i = 0; i < N; i++)
+	for (int i = 0; i < Nfull; i++)
 	{
-		rayhits[i].ray.org_x = rays[i].O.x, rayhits[i].ray.org_y = rays[i].O.y, rayhits[i].ray.org_z = rays[i].O.z;
-		rayhits[i].ray.dir_x = rays[i].D.x, rayhits[i].ray.dir_y = rays[i].D.y, rayhits[i].ray.dir_z = rays[i].D.z;
-		rayhits[i].ray.tnear = 0, rayhits[i].ray.tfar = rays[i].hit.t;
+		rayhits[i].ray.org_x = fullBatch[i].O.x, rayhits[i].ray.org_y = fullBatch[i].O.y, rayhits[i].ray.org_z = fullBatch[i].O.z;
+		rayhits[i].ray.dir_x = fullBatch[i].D.x, rayhits[i].ray.dir_y = fullBatch[i].D.y, rayhits[i].ray.dir_z = fullBatch[i].D.z;
+		rayhits[i].ray.tnear = 0, rayhits[i].ray.tfar = fullBatch[i].hit.t;
 		rayhits[i].ray.mask = -1, rayhits[i].ray.flags = 0;
 		rayhits[i].hit.geomID = RTC_INVALID_GEOMETRY_ID;
 		rayhits[i].hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 	}
 	t.reset();
 	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < N; i++) rtcIntersect1( embreeScene, rayhits + i );
+		for (int i = 0; i < Nfull; i++) rtcIntersect1( embreeScene, rayhits + i );
 	float traceTimeEmbree = t.elapsed() / 3.0f;
 	// retrieve intersection results
-	for (int i = 0; i < N; i++)
+	for (int i = 0; i < Nfull; i++)
 	{
-		rays[i].hit.t = rayhits[i].ray.tfar;
-		rays[i].hit.u = rayhits[i].hit.u, rays[i].hit.u = rayhits[i].hit.v;
-		rays[i].hit.prim = rayhits[i].hit.primID;
+		fullBatch[i].hit.t = rayhits[i].ray.tfar;
+		fullBatch[i].hit.u = rayhits[i].hit.u, fullBatch[i].hit.u = rayhits[i].hit.v;
+		fullBatch[i].hit.prim = rayhits[i].hit.primID;
 	}
-	mrays = (float)N / traceTimeEmbree;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeEmbree * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nfull / traceTimeEmbree;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeEmbree * 1000, (float)Nfull * 1e-6f, mrays * 1e-6f );
 	tinybvh::free64( rayhits );
 
 #endif
@@ -616,12 +617,12 @@ int main()
 #ifdef TRAVERSE_2WAY_MT_DIVERGENT
 
 	// shuffle rays for the next experiment - TODO: replace by random bounce
-	for (int i = 0; i < N; i++)
+	for (int i = 0; i < Nfull; i++)
 	{
-		int j = (unsigned)(i + 17 * rand()) % N;
-		Ray t = rays[i];
-		rays[i] = rays[j];
-		rays[j] = t;
+		int j = (unsigned)(i + 17 * rand()) % Nfull;
+		Ray t = fullBatch[i];
+		fullBatch[i] = fullBatch[j];
+		fullBatch[j] = t;
 	}
 
 	// trace all rays three times to estimate average performance
@@ -630,17 +631,17 @@ int main()
 	t.reset();
 	for (int j = 0; j < 3; j++)
 	{
-		const int batchCount = N / 10000;
+		const int batchCount = Nfull / 10000;
 	#pragma omp parallel for schedule(dynamic)
 		for (int batch = 0; batch < batchCount; batch++)
 		{
 			const int batchStart = batch * 10000;
-			for (int i = 0; i < 10000; i++) bvh.Intersect( rays[batchStart + i] );
+			for (int i = 0; i < 10000; i++) bvh.Intersect( fullBatch[batchStart + i] );
 		}
 	}
 	float traceTimeMTI = t.elapsed() / 3.0f;
-	mrays = (float)N / traceTimeMTI;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMTI * 1000, (float)N * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nfull / traceTimeMTI;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeMTI * 1000, (float)Nfull * 1e-6f, mrays * 1e-6f );
 
 #endif
 

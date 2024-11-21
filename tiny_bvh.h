@@ -99,7 +99,7 @@ THE SOFTWARE.
 // library version
 #define TINY_BVH_VERSION_MAJOR	0
 #define TINY_BVH_VERSION_MINOR	9
-#define TINY_BVH_VERSION_SUB	5
+#define TINY_BVH_VERSION_SUB	6
 
 // ============================================================================
 //
@@ -522,7 +522,7 @@ public:
 		float cost = 3.0f * n.SurfaceArea() + SAHCost( n.leftFirst ) + SAHCost( n.leftFirst + 1 );
 		return nodeIdx == 0 ? (cost / n.SurfaceArea()) : cost;
 	}
-	int NodeCount( BVHLayout layout ) const;
+	int NodeCount( const BVHLayout layout ) const;
 	int PrimCount( const unsigned nodeIdx = 0 ) const
 	{
 		// Determine the total number of primitives / fragments in leaf nodes.
@@ -537,12 +537,15 @@ public:
 #elif defined BVH_USENEON
 	void BuildNEON( const bvhvec4* vertices, const unsigned primCount );
 #endif
-	void Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal = false );
+	void Convert( const BVHLayout from, const BVHLayout to, const bool deleteOriginal = false );
 	void SplitLeafs(); // operates on VERBOSE layout
 	void MergeLeafs(); // operates on VERBOSE layout
 	void Optimize( const unsigned iterations, const bool convertBack = true ); // operates on VERBOSE
-	void Refit(); // operates on WALD_32BYTE
-	int Intersect( Ray& ray, BVHLayout layout = WALD_32BYTE ) const;
+	void Refit( const BVHLayout layout = WALD_32BYTE, const unsigned nodeIdx = 0 );
+	int Intersect( Ray& ray, const BVHLayout layout = WALD_32BYTE ) const;
+	bool IsOccluded( const Ray& ray, const BVHLayout layout = WALD_32BYTE ) const;
+	void BatchIntersect( Ray* rayBatch, const unsigned N, const BVHLayout layout = WALD_32BYTE ) const;
+	void BatchIsOccluded( Ray* rayBatch, const unsigned N, unsigned* result, const BVHLayout layout = WALD_32BYTE ) const;
 	void Intersect256Rays( Ray* first ) const;
 	void Intersect256RaysSSE( Ray* packet ) const; // requires BVH_USEAVX
 private:
@@ -550,11 +553,12 @@ private:
 	void AlignedFree( void* ptr );
 	int Intersect_Wald32Byte( Ray& ray ) const;
 	int Intersect_AilaLaine( Ray& ray ) const;
+	int Intersect_AltSoA( Ray& ray ) const; // requires BVH_USEAVX or BVH_USENEON
 	int Intersect_BasicBVH4( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_BasicBVH8( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_Alt4BVH( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_CWBVH( Ray& ray ) const; // only for testing, not efficient.
-	int Intersect_AltSoA( Ray& ray ) const; // requires BVH_USEAVX or BVH_USENEON
+	bool IsOccluded_Wald32Byte( const Ray& ray ) const;
 	void IntersectTri( Ray& ray, const unsigned triIdx ) const;
 	static float IntersectAABB( const Ray& ray, const bvhvec3& aabbMin, const bvhvec3& aabbMax );
 	static float SA( const bvhvec3& aabbMin, const bvhvec3& aabbMax )
@@ -1055,7 +1059,7 @@ bool BVH::ClipFrag( const Fragment& orig, Fragment& newFrag, bvhvec3 bmin, bvhve
 }
 
 // Convert: Change the BVH layout from one format into another.
-void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
+void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOriginal )
 {
 	if (from == WALD_32BYTE && to == AILA_LAINE)
 	{
@@ -1587,7 +1591,7 @@ void BVH::Convert( BVHLayout from, BVHLayout to, const bool deleteOriginal )
 	}
 }
 
-int BVH::NodeCount( BVHLayout layout ) const
+int BVH::NodeCount( const BVHLayout layout ) const
 {
 	// Determine the number of nodes in the tree. Typically the result should
 	// be usedBVHNodes - 1 (second node is always unused), but some builders may 
@@ -1614,16 +1618,42 @@ int BVH::NodeCount( BVHLayout layout ) const
 // includes trees waving in the wind, or subsequent frames for skinned
 // animations. Repeated refitting tends to lead to deteriorated BVHs and
 // slower ray tracing. Rebuild when this happens.
-void BVH::Refit()
+void BVH::Refit( const BVHLayout layout, const unsigned nodeIdx )
 {
-	assert( refittable );
-	for (int i = usedBVHNodes - 1; i >= 0; i--)
+	assert( refittable ); // SBVH cannot be refitted.
+	if (layout == WALD_32BYTE)
 	{
-		BVHNode& node = bvhNode[i];
+		assert( !may_have_holes ); // e.g., after threaded build or merging leafs.
+		for (int i = usedBVHNodes - 1; i >= 0; i--)
+		{
+			BVHNode& node = bvhNode[i];
+			if (node.isLeaf()) // leaf: adjust to current triangle vertex positions
+			{
+				bvhvec4 aabbMin( 1e30f ), aabbMax( -1e30f );
+				for (unsigned first = node.leftFirst, j = 0; j < node.triCount; j++)
+				{
+					const unsigned vertIdx = triIdx[first + j] * 3;
+					aabbMin = tinybvh_min( aabbMin, verts[vertIdx] ), aabbMax = tinybvh_max( aabbMax, verts[vertIdx] );
+					aabbMin = tinybvh_min( aabbMin, verts[vertIdx + 1] ), aabbMax = tinybvh_max( aabbMax, verts[vertIdx + 1] );
+					aabbMin = tinybvh_min( aabbMin, verts[vertIdx + 2] ), aabbMax = tinybvh_max( aabbMax, verts[vertIdx + 2] );
+				}
+				node.aabbMin = aabbMin, node.aabbMax = aabbMax;
+				continue;
+			}
+			// interior node: adjust to child bounds
+			const BVHNode& left = bvhNode[node.leftFirst], & right = bvhNode[node.leftFirst + 1];
+			node.aabbMin = tinybvh_min( left.aabbMin, right.aabbMin );
+			node.aabbMax = tinybvh_max( left.aabbMax, right.aabbMax );
+		}
+	}
+	else if (layout == VERBOSE)
+	{
+		// use a recursive process for verbose nodes: order not be guaranteed
+		BVHNodeVerbose& node = verbose[nodeIdx];
 		if (node.isLeaf()) // leaf: adjust to current triangle vertex positions
 		{
 			bvhvec4 aabbMin( 1e30f ), aabbMax( -1e30f );
-			for (unsigned first = node.leftFirst, j = 0; j < node.triCount; j++)
+			for (unsigned first = node.firstTri, j = 0; j < node.triCount; j++)
 			{
 				const unsigned vertIdx = triIdx[first + j] * 3;
 				aabbMin = tinybvh_min( aabbMin, verts[vertIdx] ), aabbMax = tinybvh_max( aabbMax, verts[vertIdx] );
@@ -1631,12 +1661,19 @@ void BVH::Refit()
 				aabbMin = tinybvh_min( aabbMin, verts[vertIdx + 2] ), aabbMax = tinybvh_max( aabbMax, verts[vertIdx + 2] );
 			}
 			node.aabbMin = aabbMin, node.aabbMax = aabbMax;
-			continue;
 		}
-		// interior node: adjust to child bounds
-		const BVHNode& left = bvhNode[node.leftFirst], & right = bvhNode[node.leftFirst + 1];
-		node.aabbMin = tinybvh_min( left.aabbMin, right.aabbMin );
-		node.aabbMax = tinybvh_max( left.aabbMax, right.aabbMax );
+		else
+		{
+			Refit( VERBOSE, node.left );
+			Refit( VERBOSE, node.right );
+			node.aabbMin = tinybvh_min( verbose[node.left].aabbMin, verbose[node.right].aabbMin );
+			node.aabbMax = tinybvh_max( verbose[node.left].aabbMax, verbose[node.right].aabbMax );
+		}
+	}
+	else
+	{
+		// not (yet) implemented.
+		assert( false );
 	}
 }
 
@@ -1950,7 +1987,7 @@ void BVH::ReinsertNodeVerbose( const unsigned Lid, const unsigned Nid, const uns
 // This function returns the intersection details in Ray::hit. Additionally,
 // the number of steps through the BVH is returned. Visualize this to get a
 // visual impression of the structure of the BVH.
-int BVH::Intersect( Ray& ray, BVHLayout layout ) const
+int BVH::Intersect( Ray& ray, const BVHLayout layout ) const
 {
 	switch (layout)
 	{
@@ -1981,8 +2018,52 @@ int BVH::Intersect( Ray& ray, BVHLayout layout ) const
 	#endif
 	default:
 		assert( false );
-	};
+	}
 	return 0;
+}
+
+// Intersect a buffer of rays with the scene.
+// For now this exists only to establish the interface.
+// A future implementation will exploit the batch to trace the rays faster.
+void BVH::BatchIntersect( Ray* rayBatch, const unsigned N, const BVHLayout layout ) const
+{
+	for (unsigned i = 0; i < N; i++) Intersect( rayBatch[i], layout );
+}
+
+// Detect if a ray is occluded / shadow ray query.
+// Unlike Intersect, this function only returns a yes/no answer: Yes if any 
+// geometry blocks it (taking into account ray length); no if the ray can 
+// travel the specified distance without encountering anything. 
+bool BVH::IsOccluded( const Ray& ray, const BVHLayout layout ) const
+{
+	switch (layout)
+	{
+	case WALD_32BYTE:
+		return IsOccluded_Wald32Byte( ray );
+		break;
+	default:
+		// For now, implemented using Intersect, so we have the interface in
+		// place. TODO: make specialized code, which will be faster.
+	{
+		Ray tmp = ray;
+		float rayLength = ray.hit.t;
+		Intersect( tmp );
+		return tmp.hit.t < rayLength;
+	}
+	break;
+	}
+}
+
+// Intersect a buffer of rays with the scene.
+// For now this exists only to establish the interface.
+// A future implementation will exploit the batch to trace the rays faster.
+// BatchIsOccluded returns the hits as a bit array in result:
+// Each unsigned integer in this array stores 32 hits.
+void BVH::BatchIsOccluded( Ray* rayBatch, const unsigned N, unsigned* result, const BVHLayout layout ) const
+{
+	unsigned words = (N + 31 /* round up */) / 32;
+	memset( result, 0, words * 4 );
+	for (unsigned i = 0; i < N; i++) if (IsOccluded( rayBatch[i], layout )) result[i >> 5] |= 1 << (i & 31);
 }
 
 // Traverse the default BVH layout (WALD_32BYTE).
@@ -2015,6 +2096,54 @@ int BVH::Intersect_Wald32Byte( Ray& ray ) const
 		}
 	}
 	return steps;
+}
+
+bool BVH::IsOccluded_Wald32Byte( const Ray& ray ) const
+{
+	assert( bvhNode != 0 );
+	BVHNode* node = &bvhNode[0], * stack[64];
+	unsigned stackPtr = 0;
+	while (1)
+	{
+		if (node->isLeaf())
+		{
+			for (unsigned i = 0; i < node->triCount; i++)
+			{
+				// Moeller-Trumbore ray/triangle intersection algorithm
+				const unsigned vertIdx = triIdx[node->leftFirst + i] * 3;
+				const bvhvec3 edge1 = verts[vertIdx + 1] - verts[vertIdx];
+				const bvhvec3 edge2 = verts[vertIdx + 2] - verts[vertIdx];
+				const bvhvec3 h = cross( ray.D, edge2 );
+				const float a = dot( edge1, h );
+				if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
+				const float f = 1 / a;
+				const bvhvec3 s = ray.O - bvhvec3( verts[vertIdx] );
+				const float u = f * dot( s, h );
+				if (u < 0 || u > 1) continue;
+				const bvhvec3 q = cross( s, edge1 );
+				const float v = f * dot( ray.D, q );
+				if (v < 0 || u + v > 1) continue;
+				const float t = f * dot( edge2, q );
+				if (t > 0 && t < ray.hit.t) return true; // no need to look further
+			}
+			if (stackPtr == 0) break; else node = stack[--stackPtr];
+			continue;
+		}
+		BVHNode* child1 = &bvhNode[node->leftFirst];
+		BVHNode* child2 = &bvhNode[node->leftFirst + 1];
+		float dist1 = child1->Intersect( ray ), dist2 = child2->Intersect( ray );
+		if (dist1 > dist2) { tinybvh_swap( dist1, dist2 ); tinybvh_swap( child1, child2 ); }
+		if (dist1 == 1e30f /* missed both child nodes */)
+		{
+			if (stackPtr == 0) break; else node = stack[--stackPtr];
+		}
+		else /* hit at least one node */
+		{
+			node = child1; /* continue with the nearest */
+			if (dist2 != 1e30f) stack[stackPtr++] = child2; /* push far child */
+		}
+	}
+	return false;
 }
 
 // Traverse the alternative BVH layout (AILA_LAINE).
