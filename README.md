@@ -22,7 +22,7 @@ Right now tiny_bvh comes with four builders:
 * ````BVH::BuildNEON```` : An optimized version of BVH::Build for ARM/NEON.
 * ````BVH::BuildHQ```` : A 'spatial splits' BVH builder, for highest BVH quality.
 
-A constructed BVH can be used to quickly intersect a ray with the geometry, using ````BVH::Intersect````.
+A constructed BVH can be used to quickly intersect a ray with the geometry, using ````BVH::Intersect```` or ````BVH::IsOccluded````, for shadow rays.
 
 The constructed BVH will have a layout suitable for construction ('````WALD_32BYTE````'). Several other layouts for the same data are available, which all serve one or more specific purposes. You can convert between layouts using ````BVH::Convert````. The available layouts are:
 * ````BVH::WALD_32BYTE```` : A compact format that stores the AABB for a node, along with child pointers and leaf information in a cross-platform-friendly way. The 32-byte size allows for cache-line alignment.
