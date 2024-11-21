@@ -21,10 +21,19 @@ Right now tiny_bvh comes with four builders:
 * ````BVH::BuildAVX```` : A highly optimized version of BVH::Build for Intel CPUs.
 * ````BVH::BuildNEON```` : An optimized version of BVH::Build for ARM/NEON.
 * ````BVH::BuildHQ```` : A 'spatial splits' BVH builder, for highest BVH quality.
- 
-Once a BVH is constructed, it may be _refitted_ in case the triangles moved using ````BVH::Refit````. Refitting is substantially faster than rebuilding and works well if the animation is subtle. Refitting does not work if polygon counts change.
 
 A constructed BVH can be used to quickly intersect a ray with the geometry, using ````BVH::Intersect````.
+
+The constructed BVH will have a layout suitable for construction ('````WALD_32BYTE````'). Several other layouts for the same data are available, which all serve one or more specific purposes. You can convert between layouts using ````BVH::Convert````. The available layouts are:
+* ````BVH::WALD_32BYTE```` : A compact format that stores the AABB for a node, along with child pointers and leaf information in a cross-platform-friendly way. The 32-byte size allows for cache-line alignment.
+* ````BVH::VERBOSE```` : A format designed for modifying BVHs, e.g. for post-build optimizations using ````BVH::Optimize()````.
+* ````BVH::AILA_LAINE```` : This format uses 64 bytes per node and stores the AABBs of the two child nodes. This is the format recommended for basic GPU ray tracing.
+* ````BVH::BASIC_BVH4```` : In this format, each node stores four child pointers, reducing the depth of the tree. This improves performance for divergent rays.
+* ````BVH::BVH4_GPU```` : The ````BASIC_BVH4```` format can be converted to the more compact ````BVH4_GPU```` layout, which will be faster for GPU ray tracing.
+* ````BVH::BASIC_BVH8```` : This format stores eight child pointers, further reducing the depth of the tree. The only purpose is the construction of ````BVH::CWBVH````.
+* ````BVH::CWBVH```` : An advanced 80-byte representation of the 8-wide BVH, for state-of-the-art GPU rendering, based on the [2017 paper](https://research.nvidia.com/publication/2017-07_efficient-incoherent-ray-traversal-gpus-through-compressed-wide-bvhs) by Ylitie et al.
+
+A BVH in the ````BVH::WALD_32BYTE```` format may be _refitted_ in case the triangles moved using ````BVH::Refit````. Refitting is substantially faster than rebuilding and works well if the animation is subtle. Refitting does not work if polygon counts change.
 
 # How To Use
 The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look at tiny_bvh_test.cpp for an example. A Visual Studio 'solution' (.sln/.vcxproj) is included, as well as a CMake file. That being said: The examples consists of only a single source file, which can be compiled with clang or g++, e.g.:
