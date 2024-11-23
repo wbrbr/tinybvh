@@ -135,30 +135,9 @@ inline void* malloc64( size_t size, void* = nullptr )
 }
 inline void free64( void* ptr, void* = nullptr ) { _aligned_free( ptr ); }
 }
-#elif defined(__EMSCRIPTEN__) // EMSCRIPTEN - needs to be before gcc and clang to avoid misdetection
+#else // EMSCRIPTEN / gcc / clang
 #define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
-#if defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
-// https://emscripten.org/docs/porting/simd.html
-#include <xmmintrin.h>
-namespace tinybvh {
-inline void* malloc64( size_t size, void* = nullptr )
-{
-	return size == 0 ? 0 : _mm_malloc( size, 64 );
-}
-inline void free64( void* ptr, void* = nullptr ) { _mm_free( ptr ); }
-}
-#else
-namespace tinybvh {
-inline void* malloc64( size_t size, void* = nullptr )
-{
-	return size == 0 ? 0 : aligned_alloc( 64, make_multiple_64( size ) );
-}
-inline void free64( void* ptr, void* = nullptr ) { free( ptr ); }
-}
-#endif
-#else // gcc / clang
-#define ALIGNED( x ) __attribute__( ( aligned( x ) ) )
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__) || defined(_M_X64) || defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
 #include <xmmintrin.h>
 namespace tinybvh {
 inline void* malloc64( size_t size, void* = nullptr )
