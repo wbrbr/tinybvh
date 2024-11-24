@@ -395,7 +395,7 @@ int main()
 	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH4 );
 	bvh.Convert( BVH::BASIC_BVH4, BVH::BVH4_GPU );
 	// create OpenCL buffers for the BVH data calculated by tiny_bvh.h
-	tinyocl::Buffer gpu4Nodes( bvh.usedAlt4Blocks * sizeof( tinybvh::bvhvec4 ), bvh.bvh4Alt );
+	tinyocl::Buffer gpu4Nodes( bvh.usedAlt4aBlocks * sizeof( tinybvh::bvhvec4 ), bvh.bvh4Alt );
 	// synchronize the host-side data to the gpu side
 	gpu4Nodes.CopyToDevice();
 #ifndef GPU_2WAY // otherwise these already exist.

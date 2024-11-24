@@ -1,7 +1,7 @@
 #include "external/fenster.h" // https://github.com/zserge/fenster
 
 // #define USE_EMBREE // enable to verify correct implementation, win64 only for now.
-#define LOADSPONZA
+#define LOADSCENE
 
 #define TINYBVH_IMPLEMENTATION
 #include "tiny_bvh.h"
@@ -19,8 +19,9 @@ void embreeError( void* userPtr, enum RTCError error, const char* str )
 BVH bvh;
 #endif
 
-#ifdef LOADSPONZA
+#ifdef LOADSCENE
 bvhvec4* triangles = 0;
+const char scene[] = "happybuddha.bin";
 #include <fstream>
 #else
 ALIGNED( 16 ) bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
@@ -51,14 +52,16 @@ void sphere_flake( float x, float y, float z, float s, int d = 0 )
 
 void Init()
 {
-#ifdef LOADSPONZA
+#ifdef LOADSCENE
 	// load raw vertex data for Crytek's Sponza
-	std::string filename{ "../testdata/cryteksponza.bin" };
+	std::string filename{ "../testdata/" };
+	filename += scene;
 	std::fstream s{ filename, s.binary | s.in };
 	if (!s.is_open())
 	{
 		// try again, look in .\testdata
-		std::string filename{ "./testdata/cryteksponza.bin" };
+		std::string filename{ "./testdata/" };
+		filename += scene;
 		s = std::fstream{ filename, s.binary | s.in };
 		assert( s.is_open() );
 	}
@@ -94,8 +97,9 @@ void Init()
 
 	// build a BVH over the scene
 #if defined(BVH_USEAVX)
-	bvh.BuildAVX( triangles, verts / 3 );
-	bvh.Convert( BVH::WALD_32BYTE, BVH::AILA_LAINE );
+	bvh.BuildHQ( triangles, verts / 3 ); 
+	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH8 );
+	bvh.Convert( BVH::BASIC_BVH8, BVH::CWBVH );
 #elif defined(BVH_USENEON)
 	bvh.BuildNEON( triangles, verts / 3 );
 #else
@@ -110,8 +114,9 @@ void Tick( uint32_t* buf )
 {
 	// setup view pyramid for a pinhole camera: 
 	// eye, p1 (top-left), p2 (top-right) and p3 (bottom-left)
-#ifdef LOADSPONZA
-	bvhvec3 eye( 0, 30, 0 ), view = normalize( bvhvec3( -8, 2, -1.7f ) );
+#ifdef LOADSCENE
+	// bvhvec3 eye( 0, 30, 0 ), view = normalize( bvhvec3( -8, 2, -1.7f ) );
+	bvhvec3 eye( 0, 13, 30 ), view = normalize( bvhvec3( 0, 0.01f, -1 ) );
 #else
 	bvhvec3 eye( -3.5f, -1.5f, -6.5f ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
 #endif
@@ -140,7 +145,9 @@ void Tick( uint32_t* buf )
 	}
 
 	// trace primary rays
-#if defined(USE_EMBREE)
+#if !defined USE_EMBREE
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::CWBVH );
+#else
 	struct RTCRayHit rayhit;
 	for (int i = 0; i < N; i++)
 	{
@@ -152,8 +159,6 @@ void Tick( uint32_t* buf )
 		rays[i].hit.u = rayhit.hit.u, rays[i].hit.u = rayhit.hit.v;
 		rays[i].hit.prim = rayhit.hit.primID, rays[i].hit.t = rayhit.ray.tfar;
 	}
-#else
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::AILA_LAINE );
 #endif
 
 	// visualize result
