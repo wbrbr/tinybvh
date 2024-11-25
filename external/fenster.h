@@ -388,6 +388,7 @@ public:
 
 void Init();
 void Tick( uint32_t* buf );
+void Shutdown();
 int run() 
 {
 	uint32_t* buf = new uint32_t[SCRWIDTH * SCRHEIGHT];
@@ -399,6 +400,7 @@ int run()
 		Tick( buf );
 		if (f.keys[27]) break;
 	}
+	Shutdown();
 	fenster_close( &f );
 	delete [] buf;
 	return 0;

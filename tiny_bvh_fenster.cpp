@@ -28,6 +28,16 @@ ALIGNED( 16 ) bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
 #endif
 int verts = 0;
 
+// setup view pyramid for a pinhole camera: 
+// eye, p1 (top-left), p2 (top-right) and p3 (bottom-left)
+#ifdef LOADSCENE
+// bvhvec3 eye( 0, 30, 0 ), view = normalize( bvhvec3( -8, 2, -1.7f ) );
+static bvhvec3 eye( 0, 13, 30 );
+static bvhvec3 view = normalize( bvhvec3( 0, 0.01f, -1 ) );
+#else
+static bvhvec3 eye( -3.5f, -1.5f, -6.5f ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
+#endif
+
 void sphere_flake( float x, float y, float z, float s, int d = 0 )
 {
 	// procedural tesselated sphere flake object
@@ -70,6 +80,7 @@ void Init()
 	printf( "Loading triangle data (%i tris).\n", verts );
 	verts *= 3, triangles = (bvhvec4*)malloc64( verts * 16 );
 	s.read( (char*)triangles, verts * 16 );
+	s.close();
 #else
 	// generate a sphere flake scene
 	sphere_flake( 0, 0, 0, 1.5f );
@@ -108,21 +119,34 @@ void Init()
 
 #endif
 
+	// load camera position / direction from file
+	std::fstream t = std::fstream{ "camera.bin", t.binary | t.in };
+	if (!t.is_open()) return;
+	t.seekp( 0 );
+	t.read( (char*)&eye, sizeof( eye ) );
+	t.read( (char*)&view, sizeof( view ) );
+	t.close();
 }
 
 void Tick( uint32_t* buf )
 {
-	// setup view pyramid for a pinhole camera: 
-	// eye, p1 (top-left), p2 (top-right) and p3 (bottom-left)
-#ifdef LOADSCENE
-	// bvhvec3 eye( 0, 30, 0 ), view = normalize( bvhvec3( -8, 2, -1.7f ) );
-	bvhvec3 eye( 0, 13, 30 ), view = normalize( bvhvec3( 0, 0.01f, -1 ) );
-#else
-	bvhvec3 eye( -3.5f, -1.5f, -6.5f ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
-#endif
 	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
 	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
 	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
+	for( int i = 0; i < SCRWIDTH * SCRHEIGHT; i++ ) buf[i] = 0xff00ff; // purple
+
+#ifdef _WIN32
+	// on windows, we get camera controls.
+	if (GetAsyncKeyState( 'A' )) eye += right * -1.0f;
+	if (GetAsyncKeyState( 'D' )) eye += right;
+	if (GetAsyncKeyState( 'W' )) eye += view;
+	if (GetAsyncKeyState( 'S' )) eye += view * -1.0f;
+	if (GetAsyncKeyState( 'R' )) eye += up;
+	if (GetAsyncKeyState( 'F' )) eye += up * -1.0f;
+	right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
+	up = 0.8f * cross( view, right ), C = eye + 2 * view;
+	p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
+#endif
 
 	// generate primary rays in a cacheline-aligned buffer - and, for data locality:
 	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
@@ -132,21 +156,16 @@ void Tick( uint32_t* buf )
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
 		{
-			int pixel_x = tx * 4 + x;
-			int pixel_y = ty * 4 + y;
-			for (int s = 0; s < 16; s++) // 16 samples per pixel
-			{
-				float u = (float)(pixel_x * 4 + (s & 3)) / (SCRWIDTH * 4);
-				float v = (float)(pixel_y * 4 + (s >> 2)) / (SCRHEIGHT * 4);
-				bvhvec3 P = p1 + u * (p2 - p1) + v * (p3 - p1);
-				rays[N++] = Ray( eye, normalize( P - eye ) );
-			}
+			float pixel_x = (float)(tx * 4 + x) / SCRWIDTH;
+			float pixel_y = (float)(ty * 4 + y) / SCRHEIGHT;
+			bvhvec3 P = p1 + pixel_x * (p2 - p1) + pixel_y * (p3 - p1);
+			rays[N++] = Ray( eye, normalize( P - eye ) );
 		}
 	}
 
 	// trace primary rays
 #if !defined USE_EMBREE
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::CWBVH );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 #else
 	struct RTCRayHit rayhit;
 	for (int i = 0; i < N; i++)
@@ -162,25 +181,29 @@ void Tick( uint32_t* buf )
 #endif
 
 	// visualize result
+	const bvhvec3 L = normalize( bvhvec3( 1, 2, 3 ) );
 	for (int i = 0, ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
-		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
+		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++, i++) if (rays[i].hit.t < 10000)
 		{
-			int pixel_x = tx * 4 + x;
-			int pixel_y = ty * 4 + y;
-			float avg = 0;
-			for (int s = 0; s < 16; s++, i++) if (rays[i].hit.t < 10000)
-			{
-				int primIdx = rays[i].hit.prim;
-				bvhvec3 v0 = triangles[primIdx * 3 + 0];
-				bvhvec3 v1 = triangles[primIdx * 3 + 1];
-				bvhvec3 v2 = triangles[primIdx * 3 + 2];
-				bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
-				avg += fabs( dot( N, normalize( bvhvec3( 1, 2, 3 ) ) ) );
-			}
-			int c = (int)(15.9f * avg);
+			int pixel_x = tx * 4 + x, pixel_y = ty * 4 + y, primIdx = rays[i].hit.prim;
+			bvhvec3 v0 = triangles[primIdx * 3 + 0];
+			bvhvec3 v1 = triangles[primIdx * 3 + 1];
+			bvhvec3 v2 = triangles[primIdx * 3 + 2];
+			bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
+			int c = (int)(255.9f * fabs( dot( N, L ) ));
 			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
 		}
 	}
 	tinybvh::free64( rays );
+}
+
+void Shutdown()
+{
+	// save camera position / direction to file
+	std::fstream s = std::fstream{ "camera.bin", s.binary | s.out };
+	s.seekp( 0 );
+	s.write( (char*)&eye, sizeof( eye ) );
+	s.write( (char*)&view, sizeof( view ) );
+	s.close();
 }
