@@ -560,8 +560,8 @@ int main()
 	bvh.Convert( BVH::WALD_32BYTE, BVH::VERBOSE );
 	t.reset();
 	bvh.Optimize( 1000000 ); // optimize the raw SBVH
-	printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
 	bvh.Convert( BVH::VERBOSE, BVH::WALD_32BYTE );
+	printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 	printf( "- CPU, coherent,   2-way optimized,    ST: " );
 	t.reset();
