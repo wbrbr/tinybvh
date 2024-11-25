@@ -557,19 +557,11 @@ int main()
 	// trace all rays three times to estimate average performance
 	// - single core version, alternative bvh layout
 	printf( "Optimizing BVH, regular...   " );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::VERBOSE );
 	t.reset();
-	if (!bvh.refittable)
-	{
-		bvh.Optimize( 1000000 ); // optimize the raw SBVH
-	}
-	else
-	{
-		bvh.buildFlag = BVH::FULLSPLIT;
-		bvh.Build( triangles, verts / 3 ); // rebuild with full splitting.
-		bvh.Optimize( 1000000 );
-		bvh.MergeLeafs();
-	}
+	bvh.Optimize( 1000000 ); // optimize the raw SBVH
 	printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
+	bvh.Convert( BVH::VERBOSE, BVH::WALD_32BYTE );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 	printf( "- CPU, coherent,   2-way optimized,    ST: " );
 	t.reset();
