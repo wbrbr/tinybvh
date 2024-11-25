@@ -326,7 +326,7 @@ typedef bvhvec4 SIMDVEC4;
 
 // error handling
 #define FATAL_ERROR_IF(c,s) if (c) { fprintf( stderr, \
-	"Fatal error in tiny_bvh.h, line %i:\n%s\n", __LINE__, s ); exit( 0 ); }
+	"Fatal error in tiny_bvh.h, line %i:\n%s\n", __LINE__, s ); std::exit( 1 ); }
 
 // ============================================================================
 //
