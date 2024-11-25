@@ -108,7 +108,7 @@ void Init()
 
 	// build a BVH over the scene
 #if defined(BVH_USEAVX)
-	bvh.BuildHQ( triangles, verts / 3 ); 
+	bvh.BuildHQ( triangles, verts / 3 );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH8 );
 	bvh.Convert( BVH::BASIC_BVH8, BVH::CWBVH );
 #elif defined(BVH_USENEON)
@@ -133,7 +133,7 @@ void Tick( uint32_t* buf )
 	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
 	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
 	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
-	for( int i = 0; i < SCRWIDTH * SCRHEIGHT; i++ ) buf[i] = 0xff00ff; // purple
+	for (int i = 0; i < SCRWIDTH * SCRHEIGHT; i++) buf[i] = 0xff00ff; // purple
 
 #ifdef _WIN32
 	// on windows, we get camera controls.

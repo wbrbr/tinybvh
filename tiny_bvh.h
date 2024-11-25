@@ -84,9 +84,9 @@ THE SOFTWARE.
 #define BVHBINS 8
 
 // SAH BVH building: Heuristic parameters
-// CPU builds: C_INT = 1, C_TRAV = 0.01 seems optimal.
+// CPU builds: C_INT = 1, C_TRAV = 1 seems optimal.
 #define C_INT	1
-#define C_TRAV	0.01f
+#define C_TRAV	1
 
 // include fast AVX BVH builder
 #if defined(__x86_64__) || defined(_M_X64) || defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
@@ -1421,7 +1421,10 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 	else if (from == WALD_32BYTE && to == BASIC_BVH8)
 	{
 		// allocate space
-		const unsigned spaceNeeded = usedBVHNodes;
+		// Note: The safe upper bound here is usedBVHNodes when converting an existing
+		// BVH2, but we need triCount * 2 to be safe in later conversions, e.g. to
+		// CWBVH, which may further split some leaf nodes.
+		const unsigned spaceNeeded = triCount * 2;
 		if (allocatedBVH8Nodes < spaceNeeded)
 		{
 			FATAL_ERROR_IF( bvhNode == 0, "BVH::Convert( WALD_32BYTE, BASIC_BVH8 ), bvhNode == 0." );
@@ -1486,7 +1489,7 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 		// Note: This can be far lower (specifically: usedBVH8Nodes) if we know that
 		// none of the BVH8 leafs has more than three primitives. 
 		// Without this guarantee, the only safe upper limit is triCount * 2, since 
-		// we will be splitting fat leafs to as we go.
+		// we will be splitting fat BVH8 leafs to as we go.
 		unsigned spaceNeeded = triCount * 2 * 5; // CWBVH nodes use 80 bytes each.
 		if (spaceNeeded > allocatedCWBVHBlocks)
 		{

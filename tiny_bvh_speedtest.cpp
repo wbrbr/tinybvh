@@ -16,7 +16,7 @@
 #define BUILD_REFERENCE
 #define BUILD_AVX
 #define BUILD_NEON
-#define BUILD_SBVH
+// #define BUILD_SBVH
 #define TRAVERSE_2WAY_ST
 #define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_SOA2WAY_ST
