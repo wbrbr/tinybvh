@@ -114,6 +114,7 @@ THE SOFTWARE.
 #include <stdio.h> // for fprintf
 #include <math.h> // for sqrtf, fabs
 #include <string.h> // for memset
+#include <stdlib.h> // for exit(1)
 #else // Emscripten / gcc / clang
 #include <cstdlib>
 #include <cstdio>
@@ -326,7 +327,7 @@ typedef bvhvec4 SIMDVEC4;
 
 // error handling
 #define FATAL_ERROR_IF(c,s) if (c) { fprintf( stderr, \
-	"Fatal error in tiny_bvh.h, line %i:\n%s\n", __LINE__, s ); std::exit( 1 ); }
+	"Fatal error in tiny_bvh.h, line %i:\n%s\n", __LINE__, s ); exit( 1 ); }
 
 // ============================================================================
 //
