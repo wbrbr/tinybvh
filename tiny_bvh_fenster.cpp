@@ -5,6 +5,7 @@
 
 #define TINYBVH_IMPLEMENTATION
 #include "tiny_bvh.h"
+#include <fstream>
 
 using namespace tinybvh;
 
@@ -21,8 +22,7 @@ BVH bvh;
 
 #ifdef LOADSCENE
 bvhvec4* triangles = 0;
-const char scene[] = "happybuddha.bin";
-#include <fstream>
+const char scene[] = "cryteksponza.bin";
 #else
 ALIGNED( 16 ) bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
 #endif
@@ -35,7 +35,8 @@ int verts = 0;
 static bvhvec3 eye( 0, 13, 30 ), p1, p2, p3;
 static bvhvec3 view = normalize( bvhvec3( 0, 0.01f, -1 ) );
 #else
-static bvhvec3 eye( -3.5f, -1.5f, -6.5f ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
+static bvhvec3 eye( -3.5f, -1.5f, -6.5f ), p1, p2, p3;
+static bvhvec3 view = normalize( bvhvec3( 3, 1.5f, 5 ) );
 #endif
 
 void sphere_flake( float x, float y, float z, float s, int d = 0 )
@@ -109,8 +110,8 @@ void Init()
 	// build a BVH over the scene
 #if defined(BVH_USEAVX)
 	bvh.BuildHQ( triangles, verts / 3 );
-	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH8 );
-	bvh.Convert( BVH::BASIC_BVH8, BVH::CWBVH );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH4 );
+	bvh.Convert( BVH::BASIC_BVH4, BVH::BVH4_AFRA );
 #elif defined(BVH_USENEON)
 	bvh.BuildNEON( triangles, verts / 3 );
 #else
@@ -172,7 +173,7 @@ void Tick( uint32_t* buf )
 
 	// trace primary rays
 #if !defined USE_EMBREE
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::CWBVH );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::BVH4_AFRA );
 #else
 	struct RTCRayHit rayhit;
 	for (int i = 0; i < N; i++)

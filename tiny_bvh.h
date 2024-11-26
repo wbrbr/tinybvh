@@ -1378,7 +1378,7 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 		// Convert a 4-wide BVH to a format suitable for CPU traversal.
 		// See Faster Incoherent Ray Traversal Using 8-Wide AVX InstructionsLayout,
 		// Atilla T. Áfra, 2013.
-		unsigned spaceNeeded = usedBVH4Nodes * 4; // here, 'block' is 16 bytes.
+		unsigned spaceNeeded = usedBVH4Nodes;
 		if (allocatedAlt4bNodes < spaceNeeded)
 		{
 			FATAL_ERROR_IF( bvh4Node == 0, "BVH::Convert( BASIC_BVH4, BVH4_AFRA ), bvh4Node == 0." );
@@ -1400,19 +1400,25 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 			for (int cidx = 0, i = 0; i < 4; i++) if (orig.child[i])
 			{
 				const BVHNode4& child = bvh4Node[orig.child[i]];
-				((float*)&newNode.xmin4)[cidx] = child.aabbMin.x, ((float*)&newNode.ymin4)[cidx] = child.aabbMin.y;
-				((float*)&newNode.zmin4)[cidx] = child.aabbMin.z, ((float*)&newNode.xmax4)[cidx] = child.aabbMax.x;
-				((float*)&newNode.ymax4)[cidx] = child.aabbMax.y, ((float*)&newNode.zmax4)[cidx] = child.aabbMax.z;
+				((float*)&newNode.xmin4)[cidx] = child.aabbMin.x;
+				((float*)&newNode.ymin4)[cidx] = child.aabbMin.y;
+				((float*)&newNode.zmin4)[cidx] = child.aabbMin.z;
+				((float*)&newNode.xmax4)[cidx] = child.aabbMax.x;
+				((float*)&newNode.ymax4)[cidx] = child.aabbMax.y;
+				((float*)&newNode.zmax4)[cidx] = child.aabbMax.z;
 				if (child.isLeaf())
-					newNode.childFirst[cidx] = orig.firstTri, newNode.triCount[cidx] = orig.triCount;
+					newNode.childFirst[cidx] = child.firstTri,
+					newNode.triCount[cidx] = child.triCount;
 				else
-					stack[stackPtr++] = (unsigned)((float*)&newNode.childFirst[cidx] - (float*)bvh4Alt2),
+					stack[stackPtr++] = (unsigned)((unsigned*)&newNode.childFirst[cidx] - (unsigned*)bvh4Alt2),
 					stack[stackPtr++] = orig.child[i];
 				cidx++;
 			}
 			// pop next task
 			if (!stackPtr) break;
-			nodeIdx = stack[--stackPtr], ((unsigned*)bvh4Alt2)[stack[--stackPtr]] = newAlt4Ptr;
+			nodeIdx = stack[--stackPtr];
+			unsigned offset = stack[--stackPtr];
+			((unsigned*)bvh4Alt2)[offset] = newAlt4Ptr;
 		#ifdef __GNUC__
 		#pragma GCC diagnostic pop
 		#endif
@@ -3172,30 +3178,31 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 
 int BVH::Intersect_Afra( Ray& ray ) const
 {
-	// SIMDVEC4 xmin4, ymin4, zmin4;
-	// SIMDVEC4 xmax4, ymax4, zmax4;
-	// unsigned childFirst[4];
-	// unsigned triCount[4];
 #if 1
 	// quick-and-dirty intersect to verify data structure
-	unsigned nodeIdx = 0, stack[64], stackPtr = 0, steps = 0;
+	unsigned nodeIdx = 0, stack[1024], stackPtr = 0, steps = 0;
 	while (1)
 	{
 		steps++;
 		BVHNode4Alt2& node = bvh4Alt2[nodeIdx];
-		for( unsigned i = 0; i < 4; i++ )
+	#ifdef __GNUC__
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+	#endif
+		for (unsigned i = 0; i < 4; i++) if (node.childFirst[i] + node.triCount[i] > 0)
 		{
 			bvhvec3 bmin, bmax;
 			bmin.x = ((float*)&node.xmin4)[i], bmax.x = ((float*)&node.xmax4)[i];
 			bmin.y = ((float*)&node.ymin4)[i], bmax.y = ((float*)&node.ymax4)[i];
 			bmin.z = ((float*)&node.zmin4)[i], bmax.z = ((float*)&node.zmax4)[i];
-			if (IntersectAABB( ray, bmin, bmax ))
+			float t = IntersectAABB( ray, bmin, bmax );
+			if (t < 1e30f)
 			{
 				if (node.triCount[i] > 0)
 				{
 					// process leaf
 					const unsigned first = node.childFirst[i], count = node.triCount[i];
-					for( unsigned j = 0; j < count; j++ ) IntersectTri( ray, triIdx[first + j] );
+					for (unsigned j = 0; j < count; j++) IntersectTri( ray, triIdx[first + j] );
 				}
 				else
 				{
@@ -3204,6 +3211,9 @@ int BVH::Intersect_Afra( Ray& ray ) const
 				}
 			}
 		}
+	#ifdef __GNUC__
+	#pragma GCC diagnostic pop
+	#endif
 		if (stackPtr == 0) break; else nodeIdx = stack[--stackPtr];
 	}
 #else
