@@ -22,8 +22,9 @@
 #define TRAVERSE_SOA2WAY_ST
 #define TRAVERSE_2WAY_MT
 #define TRAVERSE_2WAY_MT_PACKET
-#define TRAVERSE_2WAY_MT_DIVERGENT
 #define TRAVERSE_OPTIMIZED_ST
+#define TRAVERSE_4WAY_OPTIMIZED
+// #define TRAVERSE_2WAY_MT_DIVERGENT // skipping; needs improvement.
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
 
@@ -573,6 +574,30 @@ int main()
 
 #endif
 
+#ifdef TRAVERSE_4WAY_OPTIMIZED
+
+	// trace all rays three times to estimate average performance
+	// - single core version, BVH4 in SIMD-friendly layout
+#ifndef TRAVERSE_OPTIMIZED_ST
+	printf( "Optimizing BVH, regular...   " );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::VERBOSE );
+	t.reset();
+	bvh.Optimize( 1000000 ); // optimize the raw SBVH
+	bvh.Convert( BVH::VERBOSE, BVH::WALD_32BYTE );
+	printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
+#endif
+	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH4 );
+	bvh.Convert( BVH::BASIC_BVH4, BVH::BVH4_AFRA );
+	printf( "- CPU, coherent,   4-way optimized,    ST: " );
+	t.reset();
+	for (int pass = 0; pass < 3; pass++)
+		for (int i = 0; i < Nsmall; i++) bvh.Intersect( smallBatch[i], BVH::BVH4_AFRA );
+	float traceTimeAfra = t.elapsed() / 3.0f;
+	mrays = (float)Nsmall / traceTimeAfra;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAfra * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
+
+#endif
+
 #if defined EMBREE_TRAVERSE && defined EMBREE_BUILD
 
 	// trace all rays three times to estimate average performance
@@ -590,18 +615,18 @@ int main()
 		rayhits[i].hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 	}
 	t.reset();
-	for (int pass = 0; pass < 3; pass++)
-		for (int i = 0; i < Nfull; i++) rtcIntersect1( embreeScene, rayhits + i );
-	float traceTimeEmbree = t.elapsed() / 3.0f;
+	for (int pass = 0; pass < 6; pass++)
+		for (int i = 0; i < Nsmall; i++) rtcIntersect1( embreeScene, rayhits + i );
+	float traceTimeEmbree = t.elapsed() / 6.0f;
 	// retrieve intersection results
-	for (int i = 0; i < Nfull; i++)
+	for (int i = 0; i < Nsmall; i++)
 	{
 		fullBatch[i].hit.t = rayhits[i].ray.tfar;
 		fullBatch[i].hit.u = rayhits[i].hit.u, fullBatch[i].hit.u = rayhits[i].hit.v;
 		fullBatch[i].hit.prim = rayhits[i].hit.primID;
 	}
-	mrays = (float)Nfull / traceTimeEmbree;
-	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeEmbree * 1000, (float)Nfull * 1e-6f, mrays * 1e-6f );
+	mrays = (float)Nsmall / traceTimeEmbree;
+	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeEmbree * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
 	tinybvh::free64( rayhits );
 
 #endif
