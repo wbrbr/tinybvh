@@ -30,6 +30,7 @@ The constructed BVH will have a layout suitable for construction ('````WALD_32BY
 * ````BVH::AILA_LAINE```` : This format uses 64 bytes per node and stores the AABBs of the two child nodes. This is the format presented in the [2009 Aila & Laine paper](https://research.nvidia.com/sites/default/files/pubs/2009-08_Understanding-the-Efficiency/aila2009hpg_paper.pdf) and recommended for basic GPU ray tracing.
 * ````BVH::BASIC_BVH4```` : In this format, each node stores four child pointers, reducing the depth of the tree. This improves performance for divergent rays. Based on the [2008 paper](https://graphics.stanford.edu/~boulos/papers/multi_rt08.pdf) by Ingo Wald et al.
 * ````BVH::BVH4_GPU```` : The ````BASIC_BVH4```` format can be converted to the more compact ````BVH4_GPU```` layout, which will be faster for GPU ray tracing.
+* ````BVH::BVH4_AFRA```` : The ````BASIC_BVH4```` format can also be converted to a SIMD-friendly ````BVH4_AFRA```` layout, currently the fastest option for single-ray traversal on CPU.
 * ````BVH::BASIC_BVH8```` : This format stores eight child pointers, further reducing the depth of the tree. The only purpose is the construction of ````BVH::CWBVH````.
 * ````BVH::CWBVH```` : An advanced 80-byte representation of the 8-wide BVH, for state-of-the-art GPU rendering, based on the [2017 paper](https://research.nvidia.com/publication/2017-07_efficient-incoherent-ray-traversal-gpus-through-compressed-wide-bvhs) by Ylitie et al. and [code by AlanWBFT](https://github.com/AlanIWBFT/CWBVH).
 
@@ -54,7 +55,7 @@ The **performance measurement tool** uses OpenMP and can be compiled with:
 
 ````g++ -std=c++20 -mavx -Ofast -fopenmp tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
-# Version 0.9.8
+# Version 0.9.9
 This version of the library includes the following functionality:
 * Binned SAH BVH builder
 * Fast binned SAH BVH builder using AVX intrinsics
