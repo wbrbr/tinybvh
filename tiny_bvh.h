@@ -3394,13 +3394,12 @@ int BVH::Intersect_Afra( Ray& ray ) const
 	const __m128 oy4 = _mm_set1_ps( ray.O.y ), rdy4 = _mm_set1_ps( ray.rD.y );
 	const __m128 oz4 = _mm_set1_ps( ray.O.z ), rdz4 = _mm_set1_ps( ray.rD.z );
 	__m128 t4 = _mm_set1_ps( ray.hit.t ), zero4 = _mm_setzero_ps();
-	__m128 idx4 = _mm_castsi128_ps( _mm_setr_epi32( 0, 1, 2, 3 ) );
-	__m128 idxMask = _mm_castsi128_ps( _mm_set1_epi32( 0xfffffffc ) );
-	__m128 inf4 = _mm_set1_ps( 1e30f );
+	const __m128 idx4 = _mm_castsi128_ps( _mm_setr_epi32( 0, 1, 2, 3 ) );
+	const __m128 idxMask = _mm_castsi128_ps( _mm_set1_epi32( 0xfffffffc ) );
+	const __m128 inf4 = _mm_set1_ps( 1e30f );
 	while (1)
 	{
 		const BVHNode4Alt2& node = bvh4Alt2[nodeIdx];
-		steps++;
 		// intersect the ray with four AABBs
 		const __m128 x0 = _mm_sub_ps( node.xmin4, ox4 ), x1 = _mm_sub_ps( node.xmax4, ox4 );
 		const __m128 y0 = _mm_sub_ps( node.ymin4, oy4 ), y1 = _mm_sub_ps( node.ymax4, oy4 );
@@ -3413,29 +3412,32 @@ int BVH::Intersect_Afra( Ray& ray ) const
 		const __m128 hit = _mm_and_ps( _mm_and_ps( _mm_cmpge_ps( tmax, tmin ), _mm_cmplt_ps( tmin, t4 ) ), _mm_cmpge_ps( tmax, zero4 ) );
 		const int hitBits = _mm_movemask_ps( hit );
 		const int hits = __popc( hitBits );
-		nodeIdx = 0;
-		if (hits == 1)
+		nodeIdx = 0, steps++;
+		if (hits == 0)
+		{
+			if (stackPtr == 0) break; else nodeIdx = stack[--stackPtr];
+		}
+		else if (hits == 1)
 		{
 			// just one node was hit - no sorting needed.
 			unsigned lane = __bfind( hitBits );
+			unsigned count = node.triCount[lane];
 			// if (node.triCount[lane] + node.childFirst[lane] == 0) continue; // TODO - never happens?
-			if (node.triCount[lane] == 0)
+			if (count == 0) nodeIdx = node.childFirst[lane]; else
 			{
-				nodeIdx = node.childFirst[lane];
-				continue;
+				const unsigned first = node.childFirst[lane];
+				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
+					IntersectTri4( ray, triIdx[first + j], t4, verts );
+				if (stackPtr == 0) break;
+				nodeIdx = stack[--stackPtr];
 			}
-			const unsigned first = node.childFirst[lane], count = node.triCount[lane];
-			for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
-				IntersectTri4( ray, triIdx[first + j], t4, verts );
-			if (stackPtr == 0) break;
-			nodeIdx = stack[--stackPtr];
 			continue;
 		}
 		else if (hits == 2)
 		{
 			// two nodes hit
-			unsigned lane1 = __bfind( hitBits );
-			unsigned lane0 = __bfind( hitBits - (1 << lane1) );
+			unsigned lane0 = __bfind( hitBits );
+			unsigned lane1 = __bfind( hitBits - (1 << lane0) );
 			float dist0 = ((float*)&tmin)[lane0];
 			float dist1 = ((float*)&tmin)[lane1];
 			if (dist1 < dist0)
@@ -3443,27 +3445,29 @@ int BVH::Intersect_Afra( Ray& ray ) const
 				unsigned t = lane0; lane0 = lane1; lane1 = t;
 				float ft = dist0; dist0 = dist1; dist1 = ft;
 			}
+			const unsigned triCount0 = node.triCount[lane0];
+			const unsigned triCount1 = node.triCount[lane1];
 			// process first lane
-			if (node.triCount[lane0] == 0) nodeIdx = node.childFirst[lane0]; else
+			if (triCount0 == 0) nodeIdx = node.childFirst[lane0]; else
 			{
-				const unsigned first = node.childFirst[lane0], count = node.triCount[lane0];
-				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
+				const unsigned first = node.childFirst[lane0];
+				for (unsigned j = 0; j < triCount0; j++) // TODO: aim for 4 prims per leaf 
 					IntersectTri4( ray, triIdx[first + j], t4, verts );
 			}
 			// process second lane
-			if (node.triCount[lane1] == 0)
+			if (triCount1 == 0)
 			{
 				if (nodeIdx) stack[stackPtr++] = nodeIdx;
 				nodeIdx = node.childFirst[lane1];
 			}
 			else
 			{
-				const unsigned first = node.childFirst[lane1], count = node.triCount[lane1];
-				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
+				const unsigned first = node.childFirst[lane1];
+				for (unsigned j = 0; j < triCount1; j++) // TODO: aim for 4 prims per leaf 
 					IntersectTri4( ray, triIdx[first + j], t4, verts );
 			}
 		}
-		else if (hits)
+		else if (hits == 3)
 		{
 			// blend in lane indices
 			tmin = _mm_or_ps( _mm_and_ps( _mm_blendv_ps( inf4, tmin, hit ), idxMask ), idx4 );
@@ -3476,7 +3480,35 @@ int BVH::Intersect_Afra( Ray& ray ) const
 			if (d1 < d2) tmp = d1, d1 = d2, d2 = tmp;
 			// process hits
 			float d[4] = { d0, d1, d2, d3 };
-			for (int i = 0; i < 4; i++) if (d[i] < 1e29f)
+			for (int i = 1; i < 4; i++)
+			{
+				unsigned lane = *(unsigned*)&d[i] & 3;
+				if (node.triCount[lane] == 0)
+				{
+					const unsigned childIdx = node.childFirst[lane];
+					if (nodeIdx) stack[stackPtr++] = nodeIdx;
+					nodeIdx = childIdx;
+					continue;
+				}
+				const unsigned first = node.childFirst[lane], count = node.triCount[lane];
+				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
+					IntersectTri4( ray, triIdx[first + j], t4, verts );
+			}
+		}
+		else
+		{
+			// blend in lane indices
+			tmin = _mm_or_ps( _mm_and_ps( _mm_blendv_ps( inf4, tmin, hit ), idxMask ), idx4 );
+			// sort
+			float tmp, d0 = LANE( tmin, 0 ), d1 = LANE( tmin, 1 ), d2 = LANE( tmin, 2 ), d3 = LANE( tmin, 3 );
+			if (d0 < d2) tmp = d0, d0 = d2, d2 = tmp;
+			if (d1 < d3) tmp = d1, d1 = d3, d3 = tmp;
+			if (d0 < d1) tmp = d0, d0 = d1, d1 = tmp;
+			if (d2 < d3) tmp = d2, d2 = d3, d3 = tmp;
+			if (d1 < d2) tmp = d1, d1 = d2, d2 = tmp;
+			// process hits
+			float d[4] = { d0, d1, d2, d3 };
+			for (int i = 0; i < 4; i++)
 			{
 				unsigned lane = *(unsigned*)&d[i] & 3;
 				if (node.triCount[lane] + node.childFirst[lane] == 0) continue; // TODO - never happens?
