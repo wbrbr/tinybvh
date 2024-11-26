@@ -3365,6 +3365,24 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 }
 
 // Traverse a 4-way BVH stored in 'Atilla Áfra' layout.
+inline void IntersectTri4( Ray& r, unsigned idx, __m128& t4, const bvhvec4* verts )
+{
+	const unsigned vertIdx = idx * 3;
+	const bvhvec4 v0 = verts[vertIdx];
+	const bvhvec3 edge1 = verts[vertIdx + 1] - v0, edge2 = verts[vertIdx + 2] - v0;
+	const bvhvec3 h = cross( r.D, edge2 );
+	const float a = dot( edge1, h );
+	if (fabs( a ) < 0.0000001f) return; // ray parallel to triangle
+	const float f = 1 / a;
+	const bvhvec3 s = r.O - bvhvec3( v0 );
+	const float u = f * dot( s, h );
+	if (u < 0 || u > 1) return;
+	const bvhvec3 q = cross( s, edge1 );
+	const float v = f * dot( r.D, q );
+	if (v < 0 || u + v > 1) return;
+	const float t = f * dot( edge2, q );
+	if (t > 0 && t < r.hit.t) r.hit.u = u, r.hit.v = v, r.hit.prim = idx, r.hit.t = t, t4 = _mm_set1_ps( t );
+}
 int BVH::Intersect_Afra( Ray& ray ) const
 {
 	unsigned nodeIdx = 0, stack[1024], stackPtr = 0, steps = 0;
@@ -3404,29 +3422,42 @@ int BVH::Intersect_Afra( Ray& ray ) const
 			}
 			const unsigned first = node.childFirst[lane], count = node.triCount[lane];
 			for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
-			{
-				const unsigned idx = triIdx[first + j], vertIdx = idx * 3;
-				const bvhvec4 v0 = verts[vertIdx];
-				const bvhvec3 edge1 = verts[vertIdx + 1] - v0;
-				const bvhvec3 edge2 = verts[vertIdx + 2] - v0;
-				const bvhvec3 h = cross( ray.D, edge2 );
-				const float a = dot( edge1, h );
-				if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
-				const float f = 1 / a;
-				const bvhvec3 s = ray.O - bvhvec3( v0 );
-				const float u = f * dot( s, h );
-				if (u < 0 || u > 1) continue;
-				const bvhvec3 q = cross( s, edge1 );
-				const float v = f * dot( ray.D, q );
-				if (v < 0 || u + v > 1) continue;
-				const float t = f * dot( edge2, q );
-				if (t > 0 && t < ray.hit.t)
-					ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx,
-					ray.hit.t = t, t4 = _mm_set1_ps( t );
-			}
+				IntersectTri4( ray, triIdx[first + j], t4, verts );
 			if (stackPtr == 0) break;
 			nodeIdx = stack[--stackPtr];
 			continue;
+		}
+		else if (hits == 2)
+		{
+			// two nodes hit
+			unsigned lane1 = __bfind( hitBits );
+			unsigned lane0 = __bfind( hitBits - (1 << lane1) );
+			float dist0 = ((float*)&tmin)[lane0];
+			float dist1 = ((float*)&tmin)[lane1];
+			if (dist1 < dist0)
+			{
+				unsigned t = lane0; lane0 = lane1; lane1 = t;
+				float ft = dist0; dist0 = dist1; dist1 = ft;
+			}
+			// process first lane
+			if (node.triCount[lane0] == 0) nodeIdx = node.childFirst[lane0]; else
+			{
+				const unsigned first = node.childFirst[lane0], count = node.triCount[lane0];
+				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
+					IntersectTri4( ray, triIdx[first + j], t4, verts );
+			}
+			// process second lane
+			if (node.triCount[lane1] == 0)
+			{
+				if (nodeIdx) stack[stackPtr++] = nodeIdx;
+				nodeIdx = node.childFirst[lane1];
+			}
+			else
+			{
+				const unsigned first = node.childFirst[lane1], count = node.triCount[lane1];
+				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
+					IntersectTri4( ray, triIdx[first + j], t4, verts );
+			}
 		}
 		else if (hits)
 		{
@@ -3461,26 +3492,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 				}
 				const unsigned first = node.childFirst[lane], count = node.triCount[lane];
 				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
-				{
-					const unsigned idx = triIdx[first + j], vertIdx = idx * 3;
-					const bvhvec4 v0 = verts[vertIdx];
-					const bvhvec3 edge1 = verts[vertIdx + 1] - v0;
-					const bvhvec3 edge2 = verts[vertIdx + 2] - v0;
-					const bvhvec3 h = cross( ray.D, edge2 );
-					const float a = dot( edge1, h );
-					if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
-					const float f = 1 / a;
-					const bvhvec3 s = ray.O - bvhvec3( v0 );
-					const float u = f * dot( s, h );
-					if (u < 0 || u > 1) continue;
-					const bvhvec3 q = cross( s, edge1 );
-					const float v = f * dot( ray.D, q );
-					if (v < 0 || u + v > 1) continue;
-					const float t = f * dot( edge2, q );
-					if (t > 0 && t < ray.hit.t)
-						ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx,
-						ray.hit.t = t, t4 = _mm_set1_ps( t );
-				}
+					IntersectTri4( ray, triIdx[first + j], t4, verts );
 			}
 		}
 		// get next task
