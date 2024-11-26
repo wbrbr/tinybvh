@@ -3383,6 +3383,10 @@ inline void IntersectTri4( Ray& r, unsigned idx, __m128& t4, const bvhvec4* vert
 	const float t = f * dot( edge2, q );
 	if (t > 0 && t < r.hit.t) r.hit.u = u, r.hit.v = v, r.hit.prim = idx, r.hit.t = t, t4 = _mm_set1_ps( t );
 }
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+#endif
 int BVH::Intersect_Afra( Ray& ray ) const
 {
 	unsigned nodeIdx = 0, stack[1024], stackPtr = 0, steps = 0;
@@ -3474,14 +3478,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 			float d[4] = { d0, d1, d2, d3 };
 			for (int i = 0; i < 4; i++) if (d[i] < 1e29f)
 			{
-			#ifdef __GNUC__
-			#pragma GCC diagnostic push
-			#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-			#endif
 				unsigned lane = *(unsigned*)&d[i] & 3;
-			#ifdef __GNUC__
-			#pragma GCC diagnostic pop
-			#endif
 				if (node.triCount[lane] + node.childFirst[lane] == 0) continue; // TODO - never happens?
 				if (node.triCount[lane] == 0)
 				{
@@ -3501,6 +3498,9 @@ int BVH::Intersect_Afra( Ray& ray ) const
 	}
 	return steps;
 }
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 
 #endif // BVH_USEAVX
 
