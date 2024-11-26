@@ -3183,95 +3183,6 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 	return steps;
 }
 
-// Traverse a 4-way BVH stored in 'Atilla Áfra' layout.
-int BVH::Intersect_Afra( Ray& ray ) const
-{
-	unsigned nodeIdx = 0, stack[1024], stackPtr = 0, steps = 0;
-	const __m128 ox4 = _mm_set1_ps( ray.O.x ), rdx4 = _mm_set1_ps( ray.rD.x );
-	const __m128 oy4 = _mm_set1_ps( ray.O.y ), rdy4 = _mm_set1_ps( ray.rD.y );
-	const __m128 oz4 = _mm_set1_ps( ray.O.z ), rdz4 = _mm_set1_ps( ray.rD.z );
-	__m128 t4 = _mm_set1_ps( ray.hit.t ), zero4 = _mm_setzero_ps();
-	__m128 idx4 = _mm_castsi128_ps( _mm_setr_epi32( 0, 1, 2, 3 ) );
-	__m128 idxMask = _mm_castsi128_ps( _mm_set1_epi32( 0xfffffffc ) );
-	__m128 inf4 = _mm_set1_ps( 1e30f );
-	while (1)
-	{
-		const BVHNode4Alt2& node = bvh4Alt2[nodeIdx];
-		steps++;
-		// intersect the ray with four AABBs
-		const __m128 x0 = _mm_sub_ps( node.xmin4, ox4 ), x1 = _mm_sub_ps( node.xmax4, ox4 );
-		const __m128 y0 = _mm_sub_ps( node.ymin4, oy4 ), y1 = _mm_sub_ps( node.ymax4, oy4 );
-		const __m128 z0 = _mm_sub_ps( node.zmin4, oz4 ), z1 = _mm_sub_ps( node.zmax4, oz4 );
-		const __m128 tx1 = _mm_mul_ps( x0, rdx4 ), tx2 = _mm_mul_ps( x1, rdx4 );
-		const __m128 ty1 = _mm_mul_ps( y0, rdy4 ), ty2 = _mm_mul_ps( y1, rdy4 );
-		const __m128 tz1 = _mm_mul_ps( z0, rdz4 ), tz2 = _mm_mul_ps( z1, rdz4 );
-		__m128 tmin = _mm_max_ps( _mm_max_ps( _mm_min_ps( tx1, tx2 ), _mm_min_ps( ty1, ty2 ) ), _mm_min_ps( tz1, tz2 ) );
-		const __m128 tmax = _mm_min_ps( _mm_min_ps( _mm_max_ps( tx1, tx2 ), _mm_max_ps( ty1, ty2 ) ), _mm_max_ps( tz1, tz2 ) );
-		const __m128 hit = _mm_and_ps( _mm_and_ps( _mm_cmpge_ps( tmax, tmin ), _mm_cmplt_ps( tmin, t4 ) ), _mm_cmpge_ps( tmax, zero4 ) );
-		const int hits = _mm_movemask_ps( hit );
-		nodeIdx = 0;
-		if (hits)
-		{
-			// blend in lane indices
-			tmin = _mm_or_ps( _mm_and_ps( _mm_blendv_ps( inf4, tmin, hit ), idxMask ), idx4 );
-			// sort
-			float tmp, d0 = LANE( tmin, 0 ), d1 = LANE( tmin, 1 ), d2 = LANE( tmin, 2 ), d3 = LANE( tmin, 3 );
-			if (d0 > d2) tmp = d0, d0 = d2, d2 = tmp;
-			if (d1 > d3) tmp = d1, d1 = d3, d3 = tmp;
-			if (d0 > d1) tmp = d0, d0 = d1, d1 = tmp;
-			if (d2 > d3) tmp = d2, d2 = d3, d3 = tmp;
-			if (d1 > d2) tmp = d1, d1 = d2, d2 = tmp;
-			// process hits
-			float d[4] = { d0, d1, d2, d3 };
-			for (int i = 0; i < 4; i++)
-			{
-				if (d[i] > 1e29f) break;
-			#ifdef __GNUC__
-			#pragma GCC diagnostic push
-			#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-			#endif
-				unsigned lane = *(unsigned*)&d[i] & 3;
-			#ifdef __GNUC__
-			#pragma GCC diagnostic pop
-			#endif
-				if (node.triCount[lane] + node.childFirst[lane] == 0) continue; // TODO - never happens?
-				if (node.triCount[lane] == 0)
-				{
-					const unsigned childIdx = node.childFirst[lane];
-					if (!nodeIdx) nodeIdx = childIdx; else stack[stackPtr++] = childIdx;
-					continue;
-				}
-				const unsigned first = node.childFirst[lane], count = node.triCount[lane];
-				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
-				{
-					const unsigned idx = triIdx[first + j], vertIdx = idx * 3;
-					const bvhvec4 v0 = verts[vertIdx];
-					const bvhvec3 edge1 = verts[vertIdx + 1] - v0;
-					const bvhvec3 edge2 = verts[vertIdx + 2] - v0;
-					const bvhvec3 h = cross( ray.D, edge2 );
-					const float a = dot( edge1, h );
-					if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
-					const float f = 1 / a;
-					const bvhvec3 s = ray.O - bvhvec3( v0 );
-					const float u = f * dot( s, h );
-					if (u < 0 || u > 1) continue;
-					const bvhvec3 q = cross( s, edge1 );
-					const float v = f * dot( ray.D, q );
-					if (v < 0 || u + v > 1) continue;
-					const float t = f * dot( edge2, q );
-					if (t > 0 && t < ray.hit.t)
-						ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx,
-						ray.hit.t = t, t4 = _mm_set1_ps( t );
-				}
-			}
-		}
-		// get next task
-		if (nodeIdx) continue;
-		if (stackPtr == 0) break; else nodeIdx = stack[--stackPtr];
-	}
-	return steps;
-}
-
 // Intersect_CWBVH:
 // Intersect a compressed 8-wide BVH with a ray. For debugging only, not efficient.
 // Not technically limited to BVH_USEAVX, but __lzcnt and __popcnt will require
@@ -3451,6 +3362,132 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 		}
 	} while (true);
 	return 0;
+}
+
+// Traverse a 4-way BVH stored in 'Atilla Áfra' layout.
+int BVH::Intersect_Afra( Ray& ray ) const
+{
+	unsigned nodeIdx = 0, stack[1024], stackPtr = 0, steps = 0;
+	const __m128 ox4 = _mm_set1_ps( ray.O.x ), rdx4 = _mm_set1_ps( ray.rD.x );
+	const __m128 oy4 = _mm_set1_ps( ray.O.y ), rdy4 = _mm_set1_ps( ray.rD.y );
+	const __m128 oz4 = _mm_set1_ps( ray.O.z ), rdz4 = _mm_set1_ps( ray.rD.z );
+	__m128 t4 = _mm_set1_ps( ray.hit.t ), zero4 = _mm_setzero_ps();
+	__m128 idx4 = _mm_castsi128_ps( _mm_setr_epi32( 0, 1, 2, 3 ) );
+	__m128 idxMask = _mm_castsi128_ps( _mm_set1_epi32( 0xfffffffc ) );
+	__m128 inf4 = _mm_set1_ps( 1e30f );
+	while (1)
+	{
+		const BVHNode4Alt2& node = bvh4Alt2[nodeIdx];
+		steps++;
+		// intersect the ray with four AABBs
+		const __m128 x0 = _mm_sub_ps( node.xmin4, ox4 ), x1 = _mm_sub_ps( node.xmax4, ox4 );
+		const __m128 y0 = _mm_sub_ps( node.ymin4, oy4 ), y1 = _mm_sub_ps( node.ymax4, oy4 );
+		const __m128 z0 = _mm_sub_ps( node.zmin4, oz4 ), z1 = _mm_sub_ps( node.zmax4, oz4 );
+		const __m128 tx1 = _mm_mul_ps( x0, rdx4 ), tx2 = _mm_mul_ps( x1, rdx4 );
+		const __m128 ty1 = _mm_mul_ps( y0, rdy4 ), ty2 = _mm_mul_ps( y1, rdy4 );
+		const __m128 tz1 = _mm_mul_ps( z0, rdz4 ), tz2 = _mm_mul_ps( z1, rdz4 );
+		__m128 tmin = _mm_max_ps( _mm_max_ps( _mm_min_ps( tx1, tx2 ), _mm_min_ps( ty1, ty2 ) ), _mm_min_ps( tz1, tz2 ) );
+		const __m128 tmax = _mm_min_ps( _mm_min_ps( _mm_max_ps( tx1, tx2 ), _mm_max_ps( ty1, ty2 ) ), _mm_max_ps( tz1, tz2 ) );
+		const __m128 hit = _mm_and_ps( _mm_and_ps( _mm_cmpge_ps( tmax, tmin ), _mm_cmplt_ps( tmin, t4 ) ), _mm_cmpge_ps( tmax, zero4 ) );
+		const int hitBits = _mm_movemask_ps( hit );
+		const int hits = __popc( hitBits );
+		nodeIdx = 0;
+		if (hits == 1)
+		{
+			// just one node was hit - no sorting needed.
+			unsigned lane = __bfind( hitBits );
+			// if (node.triCount[lane] + node.childFirst[lane] == 0) continue; // TODO - never happens?
+			if (node.triCount[lane] == 0)
+			{
+				nodeIdx = node.childFirst[lane];
+				continue;
+			}
+			const unsigned first = node.childFirst[lane], count = node.triCount[lane];
+			for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
+			{
+				const unsigned idx = triIdx[first + j], vertIdx = idx * 3;
+				const bvhvec4 v0 = verts[vertIdx];
+				const bvhvec3 edge1 = verts[vertIdx + 1] - v0;
+				const bvhvec3 edge2 = verts[vertIdx + 2] - v0;
+				const bvhvec3 h = cross( ray.D, edge2 );
+				const float a = dot( edge1, h );
+				if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
+				const float f = 1 / a;
+				const bvhvec3 s = ray.O - bvhvec3( v0 );
+				const float u = f * dot( s, h );
+				if (u < 0 || u > 1) continue;
+				const bvhvec3 q = cross( s, edge1 );
+				const float v = f * dot( ray.D, q );
+				if (v < 0 || u + v > 1) continue;
+				const float t = f * dot( edge2, q );
+				if (t > 0 && t < ray.hit.t)
+					ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx,
+					ray.hit.t = t, t4 = _mm_set1_ps( t );
+			}
+			if (stackPtr == 0) break;
+			nodeIdx = stack[--stackPtr];
+			continue;
+		}
+		else if (hits)
+		{
+			// blend in lane indices
+			tmin = _mm_or_ps( _mm_and_ps( _mm_blendv_ps( inf4, tmin, hit ), idxMask ), idx4 );
+			// sort
+			float tmp, d0 = LANE( tmin, 0 ), d1 = LANE( tmin, 1 ), d2 = LANE( tmin, 2 ), d3 = LANE( tmin, 3 );
+			if (d0 < d2) tmp = d0, d0 = d2, d2 = tmp;
+			if (d1 < d3) tmp = d1, d1 = d3, d3 = tmp;
+			if (d0 < d1) tmp = d0, d0 = d1, d1 = tmp;
+			if (d2 < d3) tmp = d2, d2 = d3, d3 = tmp;
+			if (d1 < d2) tmp = d1, d1 = d2, d2 = tmp;
+			// process hits
+			float d[4] = { d0, d1, d2, d3 };
+			for (int i = 0; i < 4; i++) if (d[i] < 1e29f)
+			{
+			#ifdef __GNUC__
+			#pragma GCC diagnostic push
+			#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+			#endif
+				unsigned lane = *(unsigned*)&d[i] & 3;
+			#ifdef __GNUC__
+			#pragma GCC diagnostic pop
+			#endif
+				if (node.triCount[lane] + node.childFirst[lane] == 0) continue; // TODO - never happens?
+				if (node.triCount[lane] == 0)
+				{
+					const unsigned childIdx = node.childFirst[lane];
+					if (nodeIdx) stack[stackPtr++] = nodeIdx;
+					nodeIdx = childIdx;
+					continue;
+				}
+				const unsigned first = node.childFirst[lane], count = node.triCount[lane];
+				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
+				{
+					const unsigned idx = triIdx[first + j], vertIdx = idx * 3;
+					const bvhvec4 v0 = verts[vertIdx];
+					const bvhvec3 edge1 = verts[vertIdx + 1] - v0;
+					const bvhvec3 edge2 = verts[vertIdx + 2] - v0;
+					const bvhvec3 h = cross( ray.D, edge2 );
+					const float a = dot( edge1, h );
+					if (fabs( a ) < 0.0000001f) continue; // ray parallel to triangle
+					const float f = 1 / a;
+					const bvhvec3 s = ray.O - bvhvec3( v0 );
+					const float u = f * dot( s, h );
+					if (u < 0 || u > 1) continue;
+					const bvhvec3 q = cross( s, edge1 );
+					const float v = f * dot( ray.D, q );
+					if (v < 0 || u + v > 1) continue;
+					const float t = f * dot( edge2, q );
+					if (t > 0 && t < ray.hit.t)
+						ray.hit.u = u, ray.hit.v = v, ray.hit.prim = idx,
+						ray.hit.t = t, t4 = _mm_set1_ps( t );
+				}
+			}
+		}
+		// get next task
+		if (nodeIdx) continue;
+		if (stackPtr == 0) break; else nodeIdx = stack[--stackPtr];
+	}
+	return steps;
 }
 
 #endif // BVH_USEAVX
