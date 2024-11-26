@@ -486,9 +486,9 @@ public:
 		// "Parallel Spatial Splits in Bounding Volume Hierarchies", 2016, Fuetterling et al.,
 		// and refers to the potential splitting of these boxes for SBVH construction.
 		bvhvec3 bmin;				// AABB min x, y and z
-		unsigned primIdx;		// index of the original primitive
+		unsigned primIdx;			// index of the original primitive
 		bvhvec3 bmax;				// AABB max x, y and z
-		unsigned clipped = 0;	// Fragment is the result of clipping if > 0.
+		unsigned clipped = 0;		// Fragment is the result of clipping if > 0.
 		bool validBox() { return bmin.x < 1e30f; }
 	};
 	BVH( BVHContext ctx = {} ) : context( ctx )
@@ -557,6 +557,7 @@ private:
 	void AlignedFree( void* ptr );
 	int Intersect_Wald32Byte( Ray& ray ) const;
 	int Intersect_AilaLaine( Ray& ray ) const;
+	int Intersect_Afra( Ray& ray ) const;
 	int Intersect_AltSoA( Ray& ray ) const; // requires BVH_USEAVX or BVH_USENEON
 	int Intersect_BasicBVH4( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_BasicBVH8( Ray& ray ) const; // only for testing, not efficient.
@@ -1525,7 +1526,7 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 				for (int i = 0; i < 8; i++) if (node->child[i] == 0) cost[s][i] = 1e30f; else
 				{
 					BVHNode8* const child = &bvh8Node[node->child[i]];
-					if (child->triCount > 3 /* must be leaf */) SplitBVH8Leaf( node->child[i], 3 );
+					if (child->triCount > 3 /* must be leaf */) SplitBVH8Leaf( node->child[i], 1 );
 					bvhvec3 childCentroid = (child->aabbMin + child->aabbMax) * 0.5f;
 					cost[s][i] = dot( childCentroid - nodeCentroid, ds );
 				}
@@ -1881,16 +1882,19 @@ void BVH::SplitBVH8Leaf( const unsigned nodeIdx, const unsigned maxPrims )
 		BVHNode8& child = bvh8Node[node.child[nextChild] = usedBVH8Nodes++];
 		firstChild.triCount -= maxPrims, child.triCount = maxPrims;
 		child.firstTri = firstChild.firstTri + firstChild.triCount;
+		nextChild++;
 	}
 	for (unsigned i = 0; i < nextChild; i++)
 	{
 		BVHNode8& child = bvh8Node[node.child[i]];
-		child.aabbMin = bvhvec3( 1e30f ), child.aabbMax = bvhvec3( -1e30f );
-		for (unsigned j = 0; j < child.triCount; j++)
+		if (!refittable) child.aabbMin = node.aabbMin, child.aabbMax = node.aabbMax; else
 		{
-			unsigned fi = triIdx[child.firstTri + i];
-			child.aabbMin = tinybvh_min( child.aabbMin, fragment[fi].bmin * fragMinFix );
-			child.aabbMax = tinybvh_max( child.aabbMax, fragment[fi].bmax );
+			// TODO: why is this producing wrong aabbs for SBVH?
+			child.aabbMin = bvhvec3( 1e30f ), child.aabbMax = bvhvec3( -1e30f );
+			for (unsigned fi, j = 0; j < child.triCount; j++)
+				fi = triIdx[child.firstTri + j],
+				child.aabbMin = tinybvh_min( child.aabbMin, fragment[fi].bmin * fragMinFix ),
+				child.aabbMax = tinybvh_max( child.aabbMax, fragment[fi].bmax );
 		}
 	}
 	node.triCount = 0;
@@ -2126,6 +2130,10 @@ int BVH::Intersect( Ray& ray, const BVHLayout layout ) const
 		break;
 	#endif
 	#if defined BVH_USEAVX
+	case BVH4_AFRA:
+		FATAL_ERROR_IF( bvh4Alt2 == 0, "BVH::Intersect( .. , BVH4_AFRA ), bvh not available." );
+		return Intersect_Afra( ray );
+		break;
 	case CWBVH:
 		FATAL_ERROR_IF( bvh8Compact == 0, "BVH::Intersect( .. , CWBVH ), bvh not available." );
 		return Intersect_CWBVH( ray );
@@ -3159,6 +3167,49 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 			if (dist2 != 1e30f) stack[stackPtr++] = alt2Node + ridx;
 		}
 	}
+	return steps;
+}
+
+int BVH::Intersect_Afra( Ray& ray ) const
+{
+	// SIMDVEC4 xmin4, ymin4, zmin4;
+	// SIMDVEC4 xmax4, ymax4, zmax4;
+	// unsigned childFirst[4];
+	// unsigned triCount[4];
+#if 1
+	// quick-and-dirty intersect to verify data structure
+	unsigned nodeIdx = 0, stack[64], stackPtr = 0, steps = 0;
+	while (1)
+	{
+		steps++;
+		BVHNode4Alt2& node = bvh4Alt2[nodeIdx];
+		for( unsigned i = 0; i < 4; i++ )
+		{
+			bvhvec3 bmin, bmax;
+			bmin.x = ((float*)&node.xmin4)[i], bmax.x = ((float*)&node.xmax4)[i];
+			bmin.y = ((float*)&node.ymin4)[i], bmax.y = ((float*)&node.ymax4)[i];
+			bmin.z = ((float*)&node.zmin4)[i], bmax.z = ((float*)&node.zmax4)[i];
+			if (IntersectAABB( ray, bmin, bmax ))
+			{
+				if (node.triCount[i] > 0)
+				{
+					// process leaf
+					const unsigned first = node.childFirst[i], count = node.triCount[i];
+					for( unsigned j = 0; j < count; j++ ) IntersectTri( ray, triIdx[first + j] );
+				}
+				else
+				{
+					// process interior node
+					stack[stackPtr++] = node.childFirst[i];
+				}
+			}
+		}
+		if (stackPtr == 0) break; else nodeIdx = stack[--stackPtr];
+	}
+#else
+	// proper SIMD traversal
+	// TODO
+#endif
 	return steps;
 }
 

@@ -32,7 +32,7 @@ int verts = 0;
 // eye, p1 (top-left), p2 (top-right) and p3 (bottom-left)
 #ifdef LOADSCENE
 // bvhvec3 eye( 0, 30, 0 ), view = normalize( bvhvec3( -8, 2, -1.7f ) );
-static bvhvec3 eye( 0, 13, 30 );
+static bvhvec3 eye( 0, 13, 30 ), p1, p2, p3;
 static bvhvec3 view = normalize( bvhvec3( 0, 0.01f, -1 ) );
 #else
 static bvhvec3 eye( -3.5f, -1.5f, -6.5f ), view = normalize( bvhvec3( 3, 1.5f, 5 ) );
@@ -128,13 +128,10 @@ void Init()
 	t.close();
 }
 
-void Tick( uint32_t* buf )
+void UpdateCamera()
 {
 	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
-	bvhvec3 up = 0.8f * cross( view, right ), C = eye + 2 * view;
-	bvhvec3 p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
-	for (int i = 0; i < SCRWIDTH * SCRHEIGHT; i++) buf[i] = 0xff00ff; // purple
-
+	bvhvec3 up = 0.8f * cross( view, right );
 #ifdef _WIN32
 	// on windows, we get camera controls.
 	if (GetAsyncKeyState( 'A' )) eye += right * -1.0f;
@@ -143,29 +140,39 @@ void Tick( uint32_t* buf )
 	if (GetAsyncKeyState( 'S' )) eye += view * -1.0f;
 	if (GetAsyncKeyState( 'R' )) eye += up;
 	if (GetAsyncKeyState( 'F' )) eye += up * -1.0f;
+	// recalculate right, up
 	right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
-	up = 0.8f * cross( view, right ), C = eye + 2 * view;
-	p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
+	up = 0.8f * cross( view, right );
 #endif
+	bvhvec3 C = eye + 2 * view;
+	p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
+}
+
+void Tick( uint32_t* buf )
+{
+	// handle user input (windows only) and update camera
+	UpdateCamera();
+
+	// clear the screen with a debug-friendly color
+	for (int i = 0; i < SCRWIDTH * SCRHEIGHT; i++) buf[i] = 0xff00ff;
 
 	// generate primary rays in a cacheline-aligned buffer - and, for data locality:
 	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
 	int N = 0;
 	Ray* rays = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
-	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
+	for (int ty = 0; ty < SCRHEIGHT; ty += 4) for (int tx = 0; tx < SCRWIDTH; tx += 4 )
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
 		{
-			float pixel_x = (float)(tx * 4 + x) / SCRWIDTH;
-			float pixel_y = (float)(ty * 4 + y) / SCRHEIGHT;
-			bvhvec3 P = p1 + pixel_x * (p2 - p1) + pixel_y * (p3 - p1);
-			rays[N++] = Ray( eye, normalize( P - eye ) );
+			float u = (float)(tx + x) / SCRWIDTH, v = (float)(ty + y) / SCRHEIGHT;
+			bvhvec3 D = normalize( p1 + u * (p2 - p1) + v * (p3 - p1) - eye );
+			rays[N++] = Ray( eye, D, 1e30f );
 		}
 	}
 
 	// trace primary rays
 #if !defined USE_EMBREE
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::CWBVH );
 #else
 	struct RTCRayHit rayhit;
 	for (int i = 0; i < N; i++)

@@ -30,7 +30,7 @@ endif()
 
 enable_testing()
 
-add_executable(tiny_bvh_test tiny_bvh_test.cpp)
+add_executable(tiny_bvh_minimal tiny_bvh_minimal.cpp)
 add_executable(tiny_bvh_renderer tiny_bvh_renderer.cpp)
 add_executable(tiny_bvh_speedtest tiny_bvh_speedtest.cpp)
 if (NOT EMSCRIPTEN)
@@ -79,8 +79,8 @@ if (NOT MSVC)
 
 	endif()
 
-	target_compile_options(tiny_bvh_test PRIVATE ${common_cxx_flags})
-	target_link_options(tiny_bvh_test PRIVATE ${common_link_flags})
+	target_compile_options(tiny_bvh_minimal PRIVATE ${common_cxx_flags})
+	target_link_options(tiny_bvh_minimal PRIVATE ${common_link_flags})
 
 	target_compile_options(tiny_bvh_renderer PRIVATE ${common_cxx_flags})
 	target_link_options(tiny_bvh_renderer PRIVATE ${common_link_flags})
@@ -142,4 +142,4 @@ else()
 	endif()
 endif()
 
-add_test(NAME "tiny_bvh_test" COMMAND tiny_bvh_test)
+add_test(NAME "tiny_bvh_minimal" COMMAND tiny_bvh_minimal)

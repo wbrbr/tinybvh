@@ -22,7 +22,7 @@
     <ClInclude Include="..\tiny_bvh.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\tiny_bvh_test.cpp" />
+    <ClCompile Include="..\tiny_bvh_minimal.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
@@ -30,6 +30,7 @@
     <ProjectGuid>{0b5c86b2-9438-49e3-bf1a-4e1593bb436d}</ProjectGuid>
     <RootNamespace>tinybvhtest</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>tiny_bvh_minimal</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">

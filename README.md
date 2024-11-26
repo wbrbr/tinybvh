@@ -36,9 +36,9 @@ The constructed BVH will have a layout suitable for construction ('````WALD_32BY
 A BVH in the ````BVH::WALD_32BYTE```` format may be _refitted_ in case the triangles moved using ````BVH::Refit````. Refitting is substantially faster than rebuilding and works well if the animation is subtle. Refitting does not work if polygon counts change.
 
 # How To Use
-The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look at tiny_bvh_test.cpp for an example. A Visual Studio 'solution' (.sln/.vcxproj) is included, as well as a CMake file. That being said: The examples consists of only a single source file, which can be compiled with clang or g++, e.g.:
+The library ````tiny_bvh.h```` is designed to be easy to use. Please have a look at tiny_bvh_minimal.cpp for an example. A Visual Studio 'solution' (.sln/.vcxproj) is included, as well as a CMake file. That being said: The examples consists of only a single source file, which can be compiled with clang or g++, e.g.:
 
-````g++ -std=c++20 -mavx tiny_bvh_test.cpp -o tiny_bvh_test````
+````g++ -std=c++20 -mavx tiny_bvh_minimal.cpp -o tiny_bvh_minimal````
 
 The single-source sample **ASCII test renderer** can be compiled with
 
