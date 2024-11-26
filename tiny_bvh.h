@@ -591,6 +591,7 @@ public:
 	BVHNode4* bvh4Node = 0;			// BVH node for 4-wide BVH.
 	bvhvec4* bvh4Alt = 0;			// 64-byte 4-wide BVH node for efficient GPU rendering.
 	BVHNode4Alt2* bvh4Alt2 = 0;		// 64-byte 4-wide BVH node for efficient CPU rendering.
+	bvhvec4* bvh4Tris = 0;			// Triangle data for BVHNode4Alt2 nodes.
 	BVHNode8* bvh8Node = 0;			// BVH node for 8-wide BVH.
 	bvhvec4* bvh8Compact = 0;		// Nodes in CWBVH format.
 	bvhvec4* bvh8Tris = 0;			// Triangle data for CWBVH nodes.
@@ -634,6 +635,11 @@ public:
 #include <assert.h>			// for assert
 #ifdef _MSC_VER
 #include <intrin.h>			// for __lzcnt
+#endif
+
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
 #endif
 
 namespace tinybvh {
@@ -1274,10 +1280,6 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 		}
 		memset( bvh4Alt, 0, 16 * blocksNeeded );
 		// start conversion
-	#ifdef __GNUC__
-	#pragma GCC diagnostic push
-	#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-	#endif
 		unsigned nodeIdx = 0, newAlt4Ptr = 0, stack[128], stackPtr = 0, retValPos = 0;
 		while (1)
 		{
@@ -1368,9 +1370,6 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 			nodeIdx = stack[--stackPtr];
 			retValPos = stack[--stackPtr];
 		}
-	#ifdef __GNUC__
-	#pragma GCC diagnostic pop
-	#endif
 		usedAlt4aBlocks = newAlt4Ptr;
 	}
 	else if (from == BASIC_BVH4 && to == BVH4_AFRA)
@@ -1383,7 +1382,9 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 		{
 			FATAL_ERROR_IF( bvh4Node == 0, "BVH::Convert( BASIC_BVH4, BVH4_AFRA ), bvh4Node == 0." );
 			AlignedFree( bvh4Alt2 );
+			AlignedFree( bvh4Tris );
 			bvh4Alt2 = (BVHNode4Alt2*)AlignedAlloc( spaceNeeded * sizeof( BVHNode4Alt2 ) );
+			bvh4Tris = (bvhvec4*)AlignedAlloc( idxCount * 3 * sizeof( bvhvec4 ) );
 			allocatedAlt4bNodes = spaceNeeded;
 		}
 		memset( bvh4Alt2, 0, spaceNeeded * sizeof( BVHNode4Alt2 ) );
@@ -1393,10 +1394,6 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 		{
 			const BVHNode4& orig = bvh4Node[nodeIdx];
 			BVHNode4Alt2& newNode = bvh4Alt2[newAlt4Ptr++];
-		#ifdef __GNUC__
-		#pragma GCC diagnostic push
-		#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-		#endif
 			int cidx = 0;
 			for (int i = 0; i < 4; i++) if (orig.child[i])
 			{
@@ -1426,9 +1423,42 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 			nodeIdx = stack[--stackPtr];
 			unsigned offset = stack[--stackPtr];
 			((unsigned*)bvh4Alt2)[offset] = newAlt4Ptr;
-		#ifdef __GNUC__
-		#pragma GCC diagnostic pop
-		#endif
+		}
+		// Convert index list: store primitives 'by value'.
+		// This also allows us to compact and reorder them for best performance.
+		stackPtr = 0, nodeIdx = 0;
+		unsigned triPtr = 0;
+		while (1)
+		{
+			BVHNode4Alt2& node = bvh4Alt2[nodeIdx];
+			if (nodeIdx == 58663)
+			{
+				int w = 0;
+			}
+			for (int i = 0; i < 4; i++) if (node.triCount[i] + node.childFirst[i] > 0)
+			{
+				if (!node.triCount[i]) stack[stackPtr++] = node.childFirst[i]; else
+				{
+					unsigned first = node.childFirst[i];
+					unsigned count = node.triCount[i];
+					node.childFirst[i] = triPtr;
+					for (unsigned j = 0; j < count; j++)
+					{
+						unsigned fi = triIdx[first + j];
+						if (fi > triCount)
+						{
+							int w = 0;
+						}
+						bvhvec4 v0 = verts[fi * 3 + 0];
+						v0.w = *(float*)&fi; // so we know the original tri idx
+						bvh4Tris[triPtr++] = v0;
+						bvh4Tris[triPtr++] = verts[fi * 3 + 1];
+						bvh4Tris[triPtr++] = verts[fi * 3 + 2];
+					}
+				}
+			}
+			if (!stackPtr) break;
+			nodeIdx = stack[--stackPtr];
 		}
 		usedAlt4bNodes = newAlt4Ptr;
 	}
@@ -1568,10 +1598,6 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 			// encode output
 			int internalChildCount = 0, leafChildTriCount = 0, childBaseIndex = 0, triangleBaseIndex = 0;
 			unsigned char imask = 0;
-		#ifdef __GNUC__
-		#pragma GCC diagnostic push
-		#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-		#endif
 			for (int i = 0; i < 8; i++)
 			{
 				if (node->child[i] == 0) continue;
@@ -1621,9 +1647,6 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 			bvh8Compact[currentNodeAddr + 0] = bvhvec4( nodeLo, *(float*)&exyzAndimask );
 			bvh8Compact[currentNodeAddr + 1].x = *(float*)&childBaseIndex;
 			bvh8Compact[currentNodeAddr + 1].y = *(float*)&triangleBaseIndex;
-		#ifdef __GNUC__
-		#pragma GCC diagnostic pop
-		#endif
 		}
 		usedCWBVHBlocks = nodeDataPtr;
 	}
@@ -2369,14 +2392,7 @@ int BVH::Intersect_BasicBVH8( Ray& ray ) const
 #define SWAP(A,B,C,D) t=A,A=B,B=t,t2=C,C=D,D=t2;
 struct uchar4 { unsigned char x, y, z, w; };
 static uchar4 as_uchar4( const float v ) { union { float t; uchar4 t4; }; t = v; return t4; }
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-#endif
 static unsigned as_uint( const float v ) { return *(unsigned*)&v; }
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
 int BVH::Intersect_Alt4BVH( Ray& ray ) const
 {
 	// traverse a blas
@@ -3247,10 +3263,6 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 				const bvhvec4 n0 = blasNodes[child_node_index * 5 + 0], n1 = blasNodes[child_node_index * 5 + 1];
 				const bvhvec4 n2 = blasNodes[child_node_index * 5 + 2], n3 = blasNodes[child_node_index * 5 + 3];
 				const bvhvec4 n4 = blasNodes[child_node_index * 5 + 4], p = n0;
-			#ifdef __GNUC__
-			#pragma GCC diagnostic push
-			#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-			#endif
 				bvhint3 e;
 				e.x = (int)*((char*)&n0.w + 0), e.y = (int)*((char*)&n0.w + 1), e.z = (int)*((char*)&n0.w + 2);
 				ngroup.x = as_uint( n1.x ), tgroup.x = as_uint( n1.y ), tgroup.y = 0;
@@ -3311,9 +3323,6 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 					}
 				}
 				ngroup.y = (hitmask & 0xFF000000) | (as_uint( n0.w ) >> 24), tgroup.y = hitmask & 0x00FFFFFF;
-			#ifdef __GNUC__
-			#pragma GCC diagnostic pop
-			#endif
 			}
 		}
 		else tgroup = ngroup, ngroup = bvhuint2( 0 );
@@ -3367,9 +3376,10 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 // Traverse a 4-way BVH stored in 'Atilla Áfra' layout.
 inline void IntersectTri4( Ray& r, unsigned idx, __m128& t4, const bvhvec4* verts )
 {
-	const unsigned vertIdx = idx * 3;
-	const bvhvec4 v0 = verts[vertIdx];
-	const bvhvec3 edge1 = verts[vertIdx + 1] - v0, edge2 = verts[vertIdx + 2] - v0;
+	bvhvec4 v0 = verts[idx];
+	const unsigned triIdx = *(unsigned*)&v0.w;
+	v0.w = 0;
+	const bvhvec3 edge1 = verts[idx + 1] - v0, edge2 = verts[idx + 2] - v0;
 	const bvhvec3 h = cross( r.D, edge2 );
 	const float a = dot( edge1, h );
 	if (fabs( a ) < 0.0000001f) return; // ray parallel to triangle
@@ -3381,12 +3391,8 @@ inline void IntersectTri4( Ray& r, unsigned idx, __m128& t4, const bvhvec4* vert
 	const float v = f * dot( r.D, q );
 	if (v < 0 || u + v > 1) return;
 	const float t = f * dot( edge2, q );
-	if (t > 0 && t < r.hit.t) r.hit.u = u, r.hit.v = v, r.hit.prim = idx, r.hit.t = t, t4 = _mm_set1_ps( t );
+	if (t > 0 && t < r.hit.t) r.hit.u = u, r.hit.v = v, r.hit.prim = triIdx, r.hit.t = t, t4 = _mm_set1_ps( t );
 }
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-#endif
 int BVH::Intersect_Afra( Ray& ray ) const
 {
 	unsigned nodeIdx = 0, stack[1024], stackPtr = 0, steps = 0;
@@ -3412,7 +3418,6 @@ int BVH::Intersect_Afra( Ray& ray ) const
 		const __m128 hit = _mm_and_ps( _mm_and_ps( _mm_cmpge_ps( tmax, tmin ), _mm_cmplt_ps( tmin, t4 ) ), _mm_cmpge_ps( tmax, zero4 ) );
 		const int hitBits = _mm_movemask_ps( hit );
 		const int hits = __popc( hitBits );
-		nodeIdx = 0, steps++;
 		if (hits == 0)
 		{
 			if (stackPtr == 0) break; else nodeIdx = stack[--stackPtr];
@@ -3420,14 +3425,14 @@ int BVH::Intersect_Afra( Ray& ray ) const
 		else if (hits == 1)
 		{
 			// just one node was hit - no sorting needed.
-			unsigned lane = __bfind( hitBits );
-			unsigned count = node.triCount[lane];
+			const unsigned lane = __bfind( hitBits );
+			const unsigned count = node.triCount[lane];
 			// if (node.triCount[lane] + node.childFirst[lane] == 0) continue; // TODO - never happens?
 			if (count == 0) nodeIdx = node.childFirst[lane]; else
 			{
 				const unsigned first = node.childFirst[lane];
 				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
-					IntersectTri4( ray, triIdx[first + j], t4, verts );
+					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
 				if (stackPtr == 0) break;
 				nodeIdx = stack[--stackPtr];
 			}
@@ -3436,23 +3441,21 @@ int BVH::Intersect_Afra( Ray& ray ) const
 		else if (hits == 2)
 		{
 			// two nodes hit
-			unsigned lane0 = __bfind( hitBits );
-			unsigned lane1 = __bfind( hitBits - (1 << lane0) );
-			float dist0 = ((float*)&tmin)[lane0];
-			float dist1 = ((float*)&tmin)[lane1];
+			unsigned lane0 = __bfind( hitBits ), lane1 = __bfind( hitBits - (1 << lane0) );
+			float dist0 = ((float*)&tmin)[lane0], dist1 = ((float*)&tmin)[lane1];
 			if (dist1 < dist0)
 			{
 				unsigned t = lane0; lane0 = lane1; lane1 = t;
 				float ft = dist0; dist0 = dist1; dist1 = ft;
 			}
-			const unsigned triCount0 = node.triCount[lane0];
-			const unsigned triCount1 = node.triCount[lane1];
+			const unsigned triCount0 = node.triCount[lane0], triCount1 = node.triCount[lane1];
 			// process first lane
 			if (triCount0 == 0) nodeIdx = node.childFirst[lane0]; else
 			{
 				const unsigned first = node.childFirst[lane0];
 				for (unsigned j = 0; j < triCount0; j++) // TODO: aim for 4 prims per leaf 
-					IntersectTri4( ray, triIdx[first + j], t4, verts );
+					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
+				nodeIdx = 0;
 			}
 			// process second lane
 			if (triCount1 == 0)
@@ -3464,7 +3467,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 			{
 				const unsigned first = node.childFirst[lane1];
 				for (unsigned j = 0; j < triCount1; j++) // TODO: aim for 4 prims per leaf 
-					IntersectTri4( ray, triIdx[first + j], t4, verts );
+					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
 			}
 		}
 		else if (hits == 3)
@@ -3480,6 +3483,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 			if (d1 < d2) tmp = d1, d1 = d2, d2 = tmp;
 			// process hits
 			float d[4] = { d0, d1, d2, d3 };
+			nodeIdx = 0;
 			for (int i = 1; i < 4; i++)
 			{
 				unsigned lane = *(unsigned*)&d[i] & 3;
@@ -3492,7 +3496,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 				}
 				const unsigned first = node.childFirst[lane], count = node.triCount[lane];
 				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
-					IntersectTri4( ray, triIdx[first + j], t4, verts );
+					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
 			}
 		}
 		else
@@ -3508,6 +3512,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 			if (d1 < d2) tmp = d1, d1 = d2, d2 = tmp;
 			// process hits
 			float d[4] = { d0, d1, d2, d3 };
+			nodeIdx = 0;
 			for (int i = 0; i < 4; i++)
 			{
 				unsigned lane = *(unsigned*)&d[i] & 3;
@@ -3521,7 +3526,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 				}
 				const unsigned first = node.childFirst[lane], count = node.triCount[lane];
 				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
-					IntersectTri4( ray, triIdx[first + j], t4, verts );
+					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
 			}
 		}
 		// get next task
@@ -3530,9 +3535,6 @@ int BVH::Intersect_Afra( Ray& ray ) const
 	}
 	return steps;
 }
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif
 
 #endif // BVH_USEAVX
 
@@ -3824,6 +3826,10 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 #endif // BVH_USENEON
 
 } // namespace tinybvh
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 
 #endif // TINYBVH_IMPLEMENTATION
 
