@@ -244,12 +244,11 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 		{
 			const unsigned leafInfo = smem[smBase + leaf];
 			unsigned thisTri = (leafInfo & 0xffff) + offset + prim * 3;
+			const float4 edge2 = alt4Node[thisTri + 2];
+			const float4 edge1 = alt4Node[thisTri + 1];
 			const float4 v0 = alt4Node[thisTri];
-			const float4 v1 = alt4Node[thisTri + 1];
-			const float4 v2 = alt4Node[thisTri + 2];
 			const unsigned triCount = (leafInfo >> 16) & 0x7fff;
 			if (++prim == triCount) prim = 0, leaf++;
-			const float4 edge1 = v1 - v0, edge2 = v2 - v0;
 			const float3 h = cross( D, edge2.xyz );
 			const float a = dot( edge1.xyz, h );
 			if (fabs( a ) < 0.0000001f) continue;

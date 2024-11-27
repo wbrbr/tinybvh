@@ -1306,10 +1306,11 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 				{
 					unsigned t = triIdx[childNode[i]->firstTri + j];
 					bvhvec4 v0 = verts[t * 3 + 0];
+					bvh4Alt[newAlt4Ptr + 1] = verts[t * 3 + 1] - v0;
+					bvh4Alt[newAlt4Ptr + 2] = verts[t * 3 + 2] - v0;
 					v0.w = *(float*)&t; // as_float
-					bvh4Alt[newAlt4Ptr++] = v0;
-					bvh4Alt[newAlt4Ptr++] = verts[t * 3 + 1];
-					bvh4Alt[newAlt4Ptr++] = verts[t * 3 + 2];
+					bvh4Alt[newAlt4Ptr + 0] = v0;
+					newAlt4Ptr += 3;
 				}
 			}
 			// process interior nodes
@@ -1431,10 +1432,6 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 		while (1)
 		{
 			BVHNode4Alt2& node = bvh4Alt2[nodeIdx];
-			if (nodeIdx == 58663)
-			{
-				int w = 0;
-			}
 			for (int i = 0; i < 4; i++) if (node.triCount[i] + node.childFirst[i] > 0)
 			{
 				if (!node.triCount[i]) stack[stackPtr++] = node.childFirst[i]; else
@@ -1442,18 +1439,16 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 					unsigned first = node.childFirst[i];
 					unsigned count = node.triCount[i];
 					node.childFirst[i] = triPtr;
+					// assign vertex data
 					for (unsigned j = 0; j < count; j++)
 					{
 						unsigned fi = triIdx[first + j];
-						if (fi > triCount)
-						{
-							int w = 0;
-						}
 						bvhvec4 v0 = verts[fi * 3 + 0];
+						bvh4Tris[triPtr + 1] = verts[fi * 3 + 1] - v0;
+						bvh4Tris[triPtr + 2] = verts[fi * 3 + 2] - v0;
 						v0.w = *(float*)&fi; // so we know the original tri idx
-						bvh4Tris[triPtr++] = v0;
-						bvh4Tris[triPtr++] = verts[fi * 3 + 1];
-						bvh4Tris[triPtr++] = verts[fi * 3 + 2];
+						bvh4Tris[triPtr + 0] = v0;
+						triPtr += 3;
 					}
 				}
 			}
@@ -2466,9 +2461,9 @@ int BVH::Intersect_Alt4BVH( Ray& ray ) const
 			unsigned triStart = offset + (leaf[i] & 0xffff);
 			for (unsigned j = 0; j < N; j++, triStart += 3)
 			{
+				const bvhvec3 edge2 = bvhvec3( bvh4Alt[triStart + 2] );
+				const bvhvec3 edge1 = bvhvec3( bvh4Alt[triStart + 1] );
 				const bvhvec3 v0 = bvh4Alt[triStart + 0];
-				const bvhvec3 edge1 = bvhvec3( bvh4Alt[triStart + 1] ) - v0;
-				const bvhvec3 edge2 = bvhvec3( bvh4Alt[triStart + 2] ) - v0;
 				const bvhvec3 h = cross( ray.D, edge2 );
 				const float a = dot( edge1, h );
 				if (fabs( a ) < 0.0000001f) continue;
@@ -3377,19 +3372,18 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 inline void IntersectTri4( Ray& r, unsigned idx, __m128& t4, const bvhvec4* verts )
 {
 	bvhvec4 v0 = verts[idx];
+	bvhvec3 edge1 = verts[idx + 1], edge2 = verts[idx + 2];
 	const unsigned triIdx = *(unsigned*)&v0.w;
 	v0.w = 0;
-	const bvhvec3 edge1 = verts[idx + 1] - v0, edge2 = verts[idx + 2] - v0;
 	const bvhvec3 h = cross( r.D, edge2 );
 	const float a = dot( edge1, h );
 	if (fabs( a ) < 0.0000001f) return; // ray parallel to triangle
 	const float f = 1 / a;
-	const bvhvec3 s = r.O - bvhvec3( v0 );
+	const bvhvec3 s = r.O - bvhvec3( v0 ), q = cross( s, edge1 );
 	const float u = f * dot( s, h );
-	if (u < 0 || u > 1) return;
-	const bvhvec3 q = cross( s, edge1 );
 	const float v = f * dot( r.D, q );
-	if (v < 0 || u + v > 1) return;
+	const bool out = u < 0 || u > 1 || v < 0 || u + v > 1;
+	if (out) return;
 	const float t = f * dot( edge2, q );
 	if (t > 0 && t < r.hit.t) r.hit.u = u, r.hit.v = v, r.hit.prim = triIdx, r.hit.t = t, t4 = _mm_set1_ps( t );
 }
@@ -3407,27 +3401,25 @@ int BVH::Intersect_Afra( Ray& ray ) const
 	{
 		const BVHNode4Alt2& node = bvh4Alt2[nodeIdx];
 		// intersect the ray with four AABBs
-		const __m128 x0 = _mm_sub_ps( node.xmin4, ox4 ), x1 = _mm_sub_ps( node.xmax4, ox4 );
-		const __m128 y0 = _mm_sub_ps( node.ymin4, oy4 ), y1 = _mm_sub_ps( node.ymax4, oy4 );
-		const __m128 z0 = _mm_sub_ps( node.zmin4, oz4 ), z1 = _mm_sub_ps( node.zmax4, oz4 );
+		const __m128 xmin4 = node.xmin4, xmax4 = node.xmax4;
+		const __m128 ymin4 = node.ymin4, ymax4 = node.ymax4;
+		const __m128 zmin4 = node.zmin4, zmax4 = node.zmax4;
+		const __m128 x0 = _mm_sub_ps( xmin4, ox4 ), x1 = _mm_sub_ps( xmax4, ox4 );
+		const __m128 y0 = _mm_sub_ps( ymin4, oy4 ), y1 = _mm_sub_ps( ymax4, oy4 );
+		const __m128 z0 = _mm_sub_ps( zmin4, oz4 ), z1 = _mm_sub_ps( zmax4, oz4 );
 		const __m128 tx1 = _mm_mul_ps( x0, rdx4 ), tx2 = _mm_mul_ps( x1, rdx4 );
 		const __m128 ty1 = _mm_mul_ps( y0, rdy4 ), ty2 = _mm_mul_ps( y1, rdy4 );
 		const __m128 tz1 = _mm_mul_ps( z0, rdz4 ), tz2 = _mm_mul_ps( z1, rdz4 );
-		__m128 tmin = _mm_max_ps( _mm_max_ps( _mm_min_ps( tx1, tx2 ), _mm_min_ps( ty1, ty2 ) ), _mm_min_ps( tz1, tz2 ) );
-		const __m128 tmax = _mm_min_ps( _mm_min_ps( _mm_max_ps( tx1, tx2 ), _mm_max_ps( ty1, ty2 ) ), _mm_max_ps( tz1, tz2 ) );
+		const __m128 txmin = _mm_min_ps( tx1, tx2 ), tymin = _mm_min_ps( ty1, ty2 ), tzmin = _mm_min_ps( tz1, tz2 );
+		const __m128 txmax = _mm_max_ps( tx1, tx2 ), tymax = _mm_max_ps( ty1, ty2 ), tzmax = _mm_max_ps( tz1, tz2 );
+		const __m128 tmin = _mm_max_ps( _mm_max_ps( txmin, tymin ), tzmin );
+		const __m128 tmax = _mm_min_ps( _mm_min_ps( txmax, tymax ), tzmax );
 		const __m128 hit = _mm_and_ps( _mm_and_ps( _mm_cmpge_ps( tmax, tmin ), _mm_cmplt_ps( tmin, t4 ) ), _mm_cmpge_ps( tmax, zero4 ) );
-		const int hitBits = _mm_movemask_ps( hit );
-		const int hits = __popc( hitBits );
-		if (hits == 0)
-		{
-			if (stackPtr == 0) break; else nodeIdx = stack[--stackPtr];
-		}
-		else if (hits == 1)
+		const int hitBits = _mm_movemask_ps( hit ), hits = __popc( hitBits );
+		if (hits == 1 /* 43% */)
 		{
 			// just one node was hit - no sorting needed.
-			const unsigned lane = __bfind( hitBits );
-			const unsigned count = node.triCount[lane];
-			// if (node.triCount[lane] + node.childFirst[lane] == 0) continue; // TODO - never happens?
+			const unsigned lane = __bfind( hitBits ), count = node.triCount[lane];
 			if (count == 0) nodeIdx = node.childFirst[lane]; else
 			{
 				const unsigned first = node.childFirst[lane];
@@ -3438,7 +3430,13 @@ int BVH::Intersect_Afra( Ray& ray ) const
 			}
 			continue;
 		}
-		else if (hits == 2)
+		if (hits == 0 /* 29% */)
+		{
+			if (stackPtr == 0) break;
+			nodeIdx = stack[--stackPtr];
+			continue;
+		}
+		if (hits == 2 /* 16% */)
 		{
 			// two nodes hit
 			unsigned lane0 = __bfind( hitBits ), lane1 = __bfind( hitBits - (1 << lane0) );
@@ -3470,12 +3468,12 @@ int BVH::Intersect_Afra( Ray& ray ) const
 					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
 			}
 		}
-		else if (hits == 3)
+		else if (hits == 3 /* 8% */)
 		{
 			// blend in lane indices
-			tmin = _mm_or_ps( _mm_and_ps( _mm_blendv_ps( inf4, tmin, hit ), idxMask ), idx4 );
+			__m128 tm = _mm_or_ps( _mm_and_ps( _mm_blendv_ps( inf4, tmin, hit ), idxMask ), idx4 );
 			// sort
-			float tmp, d0 = LANE( tmin, 0 ), d1 = LANE( tmin, 1 ), d2 = LANE( tmin, 2 ), d3 = LANE( tmin, 3 );
+			float tmp, d0 = LANE( tm, 0 ), d1 = LANE( tm, 1 ), d2 = LANE( tm, 2 ), d3 = LANE( tm, 3 );
 			if (d0 < d2) tmp = d0, d0 = d2, d2 = tmp;
 			if (d1 < d3) tmp = d1, d1 = d3, d3 = tmp;
 			if (d0 < d1) tmp = d0, d0 = d1, d1 = tmp;
@@ -3499,12 +3497,12 @@ int BVH::Intersect_Afra( Ray& ray ) const
 					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
 			}
 		}
-		else
+		else /* hits == 4, 2%: rare */
 		{
 			// blend in lane indices
-			tmin = _mm_or_ps( _mm_and_ps( _mm_blendv_ps( inf4, tmin, hit ), idxMask ), idx4 );
+			__m128 tm = _mm_or_ps( _mm_and_ps( _mm_blendv_ps( inf4, tmin, hit ), idxMask ), idx4 );
 			// sort
-			float tmp, d0 = LANE( tmin, 0 ), d1 = LANE( tmin, 1 ), d2 = LANE( tmin, 2 ), d3 = LANE( tmin, 3 );
+			float tmp, d0 = LANE( tm, 0 ), d1 = LANE( tm, 1 ), d2 = LANE( tm, 2 ), d3 = LANE( tm, 3 );
 			if (d0 < d2) tmp = d0, d0 = d2, d2 = tmp;
 			if (d1 < d3) tmp = d1, d1 = d3, d3 = tmp;
 			if (d0 < d1) tmp = d0, d0 = d1, d1 = tmp;
@@ -3825,7 +3823,7 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 
 #endif // BVH_USENEON
 
-} // namespace tinybvh
+	} // namespace tinybvh
 
 #ifdef __GNUC__
 #pragma GCC diagnostic pop

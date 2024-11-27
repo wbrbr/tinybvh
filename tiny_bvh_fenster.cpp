@@ -31,9 +31,8 @@ int verts = 0;
 // setup view pyramid for a pinhole camera: 
 // eye, p1 (top-left), p2 (top-right) and p3 (bottom-left)
 #ifdef LOADSCENE
-// bvhvec3 eye( 0, 30, 0 ), view = normalize( bvhvec3( -8, 2, -1.7f ) );
-static bvhvec3 eye( 0, 13, 30 ), p1, p2, p3;
-static bvhvec3 view = normalize( bvhvec3( 0, 0.01f, -1 ) );
+static bvhvec3 eye( 0, 30, 0 ), p1, p2, p3;
+static bvhvec3 view = normalize( bvhvec3( -8, 2, -1.7f ) );
 #else
 static bvhvec3 eye( -3.5f, -1.5f, -6.5f ), p1, p2, p3;
 static bvhvec3 view = normalize( bvhvec3( 3, 1.5f, 5 ) );
@@ -110,8 +109,6 @@ void Init()
 	// build a BVH over the scene
 #if defined(BVH_USEAVX)
 	bvh.BuildHQ( triangles, verts / 3 );
-	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH4 );
-	bvh.Convert( BVH::BASIC_BVH4, BVH::BVH4_AFRA );
 #elif defined(BVH_USENEON)
 	bvh.BuildNEON( triangles, verts / 3 );
 #else
@@ -173,7 +170,7 @@ void Tick( uint32_t* buf )
 
 	// trace primary rays
 #if !defined USE_EMBREE
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::BVH4_AFRA );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
 #else
 	struct RTCRayHit rayhit;
 	for (int i = 0; i < N; i++)

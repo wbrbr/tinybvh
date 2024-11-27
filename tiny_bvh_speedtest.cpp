@@ -16,7 +16,7 @@
 #define BUILD_REFERENCE
 #define BUILD_AVX
 #define BUILD_NEON
-// #define BUILD_SBVH
+#define BUILD_SBVH
 #define TRAVERSE_2WAY_ST
 #define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_SOA2WAY_ST
@@ -323,9 +323,11 @@ int main()
 	// trace all rays three times to estimate average performance
 	// - single core version
 	printf( "- CPU, coherent,   basic 2-way layout, ST: " );
-	t.reset();
-	for (int pass = 0; pass < 3; pass++)
+	for (int pass = 0; pass < 4; pass++)
+	{
+		if (pass == 1) t.reset(); // first pass is cache warming
 		for (int i = 0; i < Nsmall; i++) bvh.Intersect( smallBatch[i] );
+	}
 	float traceTimeST = t.elapsed() / 3.0f;
 	mrays = (float)Nsmall / traceTimeST;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeST * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
@@ -338,9 +340,11 @@ int main()
 	// - single core version, alternative bvh layout
 	printf( "- CPU, coherent,   alt 2-way layout,   ST: " );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::AILA_LAINE );
-	t.reset();
-	for (int pass = 0; pass < 3; pass++)
+	for (int pass = 0; pass < 4; pass++)
+	{
+		if (pass == 1) t.reset(); // first pass is cache warming
 		for (int i = 0; i < Nsmall; i++) bvh.Intersect( smallBatch[i], BVH::AILA_LAINE );
+	}
 	float traceTimeAlt = t.elapsed() / 3.0f;
 	mrays = (float)Nsmall / traceTimeAlt;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
@@ -372,12 +376,13 @@ int main()
 	t.reset();
 	float traceTimeGPU = 0;
 	ailalaine_kernel.SetArguments( &gpuNodes, &idxData, &triData, &rayData );
-	for (int pass = 0; pass < 8; pass++)
+	for (int pass = 0; pass < 9; pass++)
 	{
 		ailalaine_kernel.Run( Nfull, 64, 0, &event ); // for now, todo.
 		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
+		if (pass == 0) continue; // first pass is for cache warming
 		traceTimeGPU += (endTime - startTime) * 1e-9f; // event timing is in nanoseconds
 	}
 	// get results from GPU - this also syncs the queue.
@@ -411,12 +416,13 @@ int main()
 	t.reset();
 	float traceTimeGPU4 = 0;
 	gpu4way_kernel.SetArguments( &gpu4Nodes, &rayData );
-	for (int pass = 0; pass < 8; pass++)
+	for (int pass = 0; pass < 9; pass++)
 	{
 		gpu4way_kernel.Run( Nfull, 64, 0, &event ); // for now, todo.
 		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
+		if (pass == 0) continue; // first pass is for cache warming
 		traceTimeGPU4 += (endTime - startTime) * 1e-9f; // event timing is in nanoseconds
 	}
 	// get results from GPU - this also syncs the queue.
@@ -453,12 +459,13 @@ int main()
 	t.reset();
 	float traceTimeGPU8 = 0;
 	cwbvh_kernel.SetArguments( &cwbvhNodes, &cwbvhTris, &rayData );
-	for (int pass = 0; pass < 8; pass++)
+	for (int pass = 0; pass < 9; pass++)
 	{
 		cwbvh_kernel.Run( Nfull, 64, 0, &event ); // for now, todo.
 		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
+		if (pass == 0) continue; // first pass is for cache warming
 		traceTimeGPU8 += (endTime - startTime) * 1e-9f; // event timing is in nanoseconds
 	}
 	// get results from GPU - this also syncs the queue.
@@ -478,9 +485,11 @@ int main()
 	// - single core version, alternative bvh layout 2
 	printf( "- CPU, coherent,   soa 2-way layout,   ST: " );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
-	t.reset();
-	for (int pass = 0; pass < 3; pass++)
+	for (int pass = 0; pass < 4; pass++)
+	{
+		if (pass == 1) t.reset(); // first pass is cache warming
 		for (int i = 0; i < Nsmall; i++) bvh.Intersect( smallBatch[i], BVH::ALT_SOA );
+	}
 	float traceTimeAlt2 = t.elapsed() / 3.0f;
 	mrays = (float)Nsmall / traceTimeAlt2;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAlt2 * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
@@ -492,9 +501,9 @@ int main()
 	// trace all rays three times to estimate average performance
 	// - multi-core version (using OpenMP and batches of 10,000 rays)
 	printf( "- CPU, coherent,   basic 2-way layout, MT: " );
-	t.reset();
-	for (int j = 0; j < 3; j++)
+	for (int pass = 0; pass < 4; pass++)
 	{
+		if (pass == 1) t.reset(); // first pass is cache warming
 		const int batchCount = Nfull / 10000;
 	#pragma omp parallel for schedule(dynamic)
 		for (int batch = 0; batch < batchCount; batch++)
@@ -514,9 +523,9 @@ int main()
 	// trace all rays three times to estimate average performance
 	// - coherent distribution, multi-core, packet traversal
 	printf( "- CPU, coherent,   2-way, packets,     MT: " );
-	t.reset();
-	for (int j = 0; j < 3; j++)
+	for (int pass = 0; pass < 4; pass++)
 	{
+		if (pass == 1) t.reset(); // first pass is cache warming
 		const int batchCount = Nfull / (30 * 256); // batches of 30 packets of 256 rays
 	#pragma omp parallel for schedule(dynamic)
 		for (int batch = 0; batch < batchCount; batch++)
@@ -534,9 +543,9 @@ int main()
 	// trace all rays three times to estimate average performance
 	// - coherent distribution, multi-core, packet traversal, SSE version
 	printf( "- CPU, coherent,   2-way, packets/SSE, MT: " );
-	t.reset();
-	for (int j = 0; j < 3; j++)
+	for (int pass = 0; pass < 4; pass++)
 	{
+		if (pass == 1) t.reset(); // first pass is cache warming
 		const int batchCount = Nfull / (30 * 256); // batches of 30 packets of 256 rays
 	#pragma omp parallel for schedule(dynamic)
 		for (int batch = 0; batch < batchCount; batch++)
@@ -565,9 +574,11 @@ int main()
 	printf( "done (%.2fs). New: %i nodes, SAH=%.2f\n", t.elapsed(), bvh.NodeCount( BVH::WALD_32BYTE ), bvh.SAHCost() );
 	bvh.Convert( BVH::WALD_32BYTE, BVH::ALT_SOA );
 	printf( "- CPU, coherent,   2-way optimized,    ST: " );
-	t.reset();
-	for (int pass = 0; pass < 3; pass++)
+	for (int pass = 0; pass < 4; pass++)
+	{
+		if (pass == 1) t.reset(); // first pass is cache warming
 		for (int i = 0; i < Nsmall; i++) bvh.Intersect( smallBatch[i], BVH::ALT_SOA );
+	}
 	float traceTimeOpt = t.elapsed() / 3.0f;
 	mrays = (float)Nsmall / traceTimeOpt;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeOpt * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
@@ -589,9 +600,11 @@ int main()
 	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH4 );
 	bvh.Convert( BVH::BASIC_BVH4, BVH::BVH4_AFRA );
 	printf( "- CPU, coherent,   4-way optimized,    ST: " );
-	t.reset();
-	for (int pass = 0; pass < 3; pass++)
+	for (int pass = 0; pass < 4; pass++)
+	{
+		if (pass == 1) t.reset(); // first pass is cache warming
 		for (int i = 0; i < Nsmall; i++) bvh.Intersect( smallBatch[i], BVH::BVH4_AFRA );
+	}
 	float traceTimeAfra = t.elapsed() / 3.0f;
 	mrays = (float)Nsmall / traceTimeAfra;
 	printf( "%8.1fms for %6.2fM rays => %6.2fMRay/s\n", traceTimeAfra * 1000, (float)Nsmall * 1e-6f, mrays * 1e-6f );
@@ -614,10 +627,12 @@ int main()
 		rayhits[i].hit.geomID = RTC_INVALID_GEOMETRY_ID;
 		rayhits[i].hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 	}
-	t.reset();
-	for (int pass = 0; pass < 6; pass++)
+	for (int pass = 0; pass < 4; pass++)
+	{
+		if (pass == 1) t.reset(); // first pass is cache warming
 		for (int i = 0; i < Nsmall; i++) rtcIntersect1( embreeScene, rayhits + i );
-	float traceTimeEmbree = t.elapsed() / 6.0f;
+	}
+	float traceTimeEmbree = t.elapsed() / 3.0f;
 	// retrieve intersection results
 	for (int i = 0; i < Nsmall; i++)
 	{
@@ -646,8 +661,9 @@ int main()
 	// - divergent distribution, multi-core
 	printf( "- CPU, incoherent, basic 2-way layout, MT: " );
 	t.reset();
-	for (int j = 0; j < 3; j++)
+	for (int pass = 0; pass < 4; pass++)
 	{
+		if (pass == 1) t.reset(); // first pass is cache warming
 		const int batchCount = Nfull / 10000;
 	#pragma omp parallel for schedule(dynamic)
 		for (int batch = 0; batch < batchCount; batch++)
