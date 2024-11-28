@@ -109,6 +109,8 @@ void Init()
 	// build a BVH over the scene
 #if defined(BVH_USEAVX)
 	bvh.BuildHQ( triangles, verts / 3 );
+	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH4 );
+	bvh.Convert( BVH::BASIC_BVH4, BVH::BVH4_AFRA );
 #elif defined(BVH_USENEON)
 	bvh.BuildNEON( triangles, verts / 3 );
 #else
@@ -170,7 +172,7 @@ void Tick( uint32_t* buf )
 
 	// trace primary rays
 #if !defined USE_EMBREE
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i] );
+	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::BVH4_AFRA );
 #else
 	struct RTCRayHit rayhit;
 	for (int i = 0; i < N; i++)

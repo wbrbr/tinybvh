@@ -1074,6 +1074,37 @@ bool BVH::ClipFrag( const Fragment& orig, Fragment& newFrag, bvhvec3 bmin, bvhve
 	return Nin > 0;
 }
 
+// PrecomputeTriangle (helper), transforms a triangle to the format used in:
+// Fast Ray-Triangle Intersections by Coordinate Transformation. Baldwin & Weber, 2016. 
+static void PrecomputeTriangle( const bvhvec4* const vert, float* T )
+{
+	bvhvec3 v0 = vert[0], v1 = vert[1], v2 = vert[2];
+	bvhvec3 e1 = v1 - v0, e2 = v2 - v0, N = cross( e1, e2 );
+	float x1, x2, n = dot( v0, N ), rN;
+	if (fabs( N[0] ) > fabs( N[1] ) && fabs( N[0] ) > fabs( N[2] ))
+	{
+		x1 = v1.y * v0.z - v1.z * v0.y, x2 = v2.y * v0.z - v2.z * v0.y, rN = 1.0f / N.x;
+		T[0] = 0, T[1] = e2.z * rN, T[2] = -e2.y * rN, T[3] = x2 * rN;
+		T[4] = 0, T[5] = -e1.z * rN, T[6] = e1.y * rN, T[7] = -x1 * rN;
+		T[8] = 1, T[9] = N.y * rN, T[10] = N.z * rN, T[11] = -n * rN;
+	}
+	else if (fabs( N.y ) > fabs( N.z ))
+	{
+		x1 = v1.z * v0.x - v1.x * v0.z, x2 = v2.z * v0.x - v2.x * v0.z, rN = 1.0f / N.y;
+		T[0] = -e2.z * rN, T[1] = 0, T[2] = e2.x * rN, T[3] = x2 * rN;
+		T[4] = e1.z * rN, T[5] = 0, T[6] = -e1.x * rN, T[7] = -x1 * rN;
+		T[8] = N.x * rN, T[9] = 1, T[10] = N.z * rN, T[11] = -n * rN;
+	}
+	else if (fabs( N.z ) > 0)
+	{
+		x1 = v1.x * v0.y - v1.y * v0.x, x2 = v2.x * v0.y - v2.y * v0.x, rN = 1.0f / N.z;
+		T[0] = e2.y * rN, T[1] = -e2.x * rN, T[2] = 0, T[3] = x2 * rN;
+		T[4] = -e1.y * rN, T[5] = e1.x * rN, T[6] = 0, T[7] = -x1 * rN;
+		T[8] = N.x * rN, T[9] = N.y * rN, T[10] = 1, T[11] = -n * rN;
+	}
+	else memset( T, 0, 12 * 4 ); // cerr << "degenerate source " << endl;
+}
+
 // Convert: Change the BVH layout from one format into another.
 void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOriginal )
 {
@@ -1385,7 +1416,7 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 			AlignedFree( bvh4Alt2 );
 			AlignedFree( bvh4Tris );
 			bvh4Alt2 = (BVHNode4Alt2*)AlignedAlloc( spaceNeeded * sizeof( BVHNode4Alt2 ) );
-			bvh4Tris = (bvhvec4*)AlignedAlloc( idxCount * 3 * sizeof( bvhvec4 ) );
+			bvh4Tris = (bvhvec4*)AlignedAlloc( idxCount * 4 * sizeof( bvhvec4 ) );
 			allocatedAlt4bNodes = spaceNeeded;
 		}
 		memset( bvh4Alt2, 0, spaceNeeded * sizeof( BVHNode4Alt2 ) );
@@ -1443,12 +1474,9 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 					for (unsigned j = 0; j < count; j++)
 					{
 						unsigned fi = triIdx[first + j];
-						bvhvec4 v0 = verts[fi * 3 + 0];
-						bvh4Tris[triPtr + 1] = verts[fi * 3 + 1] - v0;
-						bvh4Tris[triPtr + 2] = verts[fi * 3 + 2] - v0;
-						v0.w = *(float*)&fi; // so we know the original tri idx
-						bvh4Tris[triPtr + 0] = v0;
-						triPtr += 3;
+						PrecomputeTriangle( verts + fi * 3, (float*)&bvh4Tris[triPtr] );
+						bvh4Tris[triPtr + 3] = bvhvec4( 0, 0, 0, *(float*)&fi );
+						triPtr += 4;
 					}
 				}
 			}
@@ -3369,23 +3397,24 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 }
 
 // Traverse a 4-way BVH stored in 'Atilla Áfra' layout.
-inline void IntersectTri4( Ray& r, unsigned idx, __m128& t4, const bvhvec4* verts )
+inline void IntersectTri4( Ray& r, __m128& t4, const float* T )
 {
-	bvhvec4 v0 = verts[idx];
-	bvhvec3 edge1 = verts[idx + 1], edge2 = verts[idx + 2];
-	const unsigned triIdx = *(unsigned*)&v0.w;
-	v0.w = 0;
-	const bvhvec3 h = cross( r.D, edge2 );
-	const float a = dot( edge1, h );
-	if (fabs( a ) < 0.0000001f) return; // ray parallel to triangle
-	const float f = 1 / a;
-	const bvhvec3 s = r.O - bvhvec3( v0 ), q = cross( s, edge1 );
-	const float u = f * dot( s, h );
-	const float v = f * dot( r.D, q );
-	const bool out = u < 0 || u > 1 || v < 0 || u + v > 1;
-	if (out) return;
-	const float t = f * dot( edge2, q );
-	if (t > 0 && t < r.hit.t) r.hit.u = u, r.hit.v = v, r.hit.prim = triIdx, r.hit.t = t, t4 = _mm_set1_ps( t );
+	const float transS = T[8] * r.O.x + T[9] * r.O.y + T[10] * r.O.z + T[11];
+	const float transD = T[8] * r.D.x + T[9] * r.D.y + T[10] * r.D.z;
+	const float ta = -transS / transD;
+	if (ta <= 0 || ta >= r.hit.t) return;
+	const bvhvec3 wr = r.O + ta * r.D;
+	const float u = T[0] * wr.x + T[1] * wr.y + T[2] * wr.z + T[3];
+	const float v = T[4] * wr.x + T[5] * wr.y + T[6] * wr.z + T[7];
+	const bool hit = u >= 0 && v >= 0 && u + v < 1;
+	if (hit)
+	{
+		r.hit.u = u;
+		r.hit.v = v;
+		r.hit.prim = *(unsigned*)&T[15];
+		r.hit.t = ta;
+		t4 = _mm_set1_ps( ta );
+	}
 }
 int BVH::Intersect_Afra( Ray& ray ) const
 {
@@ -3424,7 +3453,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 			{
 				const unsigned first = node.childFirst[lane];
 				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
-					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
+					IntersectTri4( ray, t4, (float*)(bvh4Tris + first + j * 4 ) );
 				if (stackPtr == 0) break;
 				nodeIdx = stack[--stackPtr];
 			}
@@ -3452,7 +3481,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 			{
 				const unsigned first = node.childFirst[lane0];
 				for (unsigned j = 0; j < triCount0; j++) // TODO: aim for 4 prims per leaf 
-					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
+					IntersectTri4( ray, t4, (float*)(bvh4Tris + first + j * 4 ) );
 				nodeIdx = 0;
 			}
 			// process second lane
@@ -3465,7 +3494,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 			{
 				const unsigned first = node.childFirst[lane1];
 				for (unsigned j = 0; j < triCount1; j++) // TODO: aim for 4 prims per leaf 
-					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
+					IntersectTri4( ray, t4, (float*)(bvh4Tris + first + j * 4 ) );
 			}
 		}
 		else if (hits == 3 /* 8% */)
@@ -3494,7 +3523,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 				}
 				const unsigned first = node.childFirst[lane], count = node.triCount[lane];
 				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
-					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
+					IntersectTri4( ray, t4, (float*)(bvh4Tris + first + j * 4 ) );
 			}
 		}
 		else /* hits == 4, 2%: rare */
@@ -3524,7 +3553,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 				}
 				const unsigned first = node.childFirst[lane], count = node.triCount[lane];
 				for (unsigned j = 0; j < count; j++) // TODO: aim for 4 prims per leaf 
-					IntersectTri4( ray, first + j * 3, t4, bvh4Tris );
+					IntersectTri4( ray, t4, (float*)(bvh4Tris + first + j * 4 ) );
 			}
 		}
 		// get next task
@@ -3823,7 +3852,7 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 
 #endif // BVH_USENEON
 
-	} // namespace tinybvh
+} // namespace tinybvh
 
 #ifdef __GNUC__
 #pragma GCC diagnostic pop

@@ -25,8 +25,8 @@
 #define TRAVERSE_OPTIMIZED_ST
 #define TRAVERSE_4WAY_OPTIMIZED
 // #define TRAVERSE_2WAY_MT_DIVERGENT // skipping; needs improvement.
-// #define EMBREE_BUILD // win64-only for now.
-// #define EMBREE_TRAVERSE // win64-only for now.
+#define EMBREE_BUILD // win64-only for now.
+#define EMBREE_TRAVERSE // win64-only for now.
 
 // GPU rays: only if ENABLE_OPENCL is defined.
 #define GPU_2WAY
