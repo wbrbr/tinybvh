@@ -1,6 +1,3 @@
-# dev
-This is the **development branch** for tinybvh. New features will be tested and finetuned here first, so main stays stable.
-
 # tinybvh
 Single-header BVH construction and traversal library written as "Sane C++" (or "C with classes"). The library has no dependencies. 
 
