@@ -2049,8 +2049,10 @@ bool BVH::IsOccluded( const Ray& ray, const BVHLayout layout ) const
 	{
 	case WALD_32BYTE: return IsOccluded_Wald32Byte( ray );
 	case AILA_LAINE: return IsOccluded_AilaLaine( ray );
+#if defined BVH_USEAVX
 	case ALT_SOA: return IsOccluded_AltSoA( ray );
 	case BVH4_AFRA: return IsOccluded_Afra( ray );
+#endif
 	default:
 		// For now, implemented using Intersect, so we have the interface in
 		// place. TODO: make specialized code, which will be faster.
