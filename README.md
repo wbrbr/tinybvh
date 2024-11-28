@@ -98,6 +98,7 @@ These features have already been completed but need polishing and adapting to th
 # tinybvh in the Wild
 A list of projects using tinybvh:
 * [unity-tinybvh](https://github.com/andr3wmac/unity-tinybvh): An example implementation for tinybvh in Unity and a foundation for building compute based raytracing solutions, by Andrew MacIntyre.
+Created or know about other projects? [Let me know](mailto:bikker.j@gmail.com)!
 
 # Contact
 Questions, remarks? Contact me at bikker.j@gmail.com or on twitter: @j_bikker, or BlueSky: @jbikker.bsky.social .
