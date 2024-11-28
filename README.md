@@ -1,11 +1,3 @@
-# dev
-This is the **development branch** of tinybvh. For stable code please use the main branch.
-Features under development:
-* Faster triangle intersection, based on the [2016 paper](https://jcgt.org/published/0005/03/03/paper.pdf) by Baldwin & Weber. Currently in BVH4_AFRA, to be added for CWBVH.
-* In progress: Specialized shadow ray queries.
-* In progress: Optimized batch traversal.
-* In progress: Better / more speedtests: include shadow rays, add AO and diffuse rays.
-
 # tinybvh
 Single-header BVH construction and traversal library written as "Sane C++" (or "C with classes"). The library has no dependencies. 
 
