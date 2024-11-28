@@ -1,11 +1,3 @@
-# dev
-This is the **development branch** of tinybvh. For stable code please use the main branch.
-Features under development:
-* Faster triangle intersection, based on the [2016 paper](https://jcgt.org/published/0005/03/03/paper.pdf) by Baldwin & Weber. Currently in BVH4_AFRA, to be added for CWBVH.
-* In progress: Specialized shadow ray queries.
-* In progress: Optimized batch traversal.
-* In progress: Better / more speedtests: include shadow rays, add AO and diffuse rays.
-
 # tinybvh
 Single-header BVH construction and traversal library written as "Sane C++" (or "C with classes"). The library has no dependencies. 
 
@@ -63,7 +55,7 @@ The **performance measurement tool** uses OpenMP and can be compiled with:
 
 ````g++ -std=c++20 -mavx -Ofast -fopenmp tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
-# Version 0.9.9
+# Version 1.0.0
 This version of the library includes the following functionality:
 * Binned SAH BVH builder
 * Fast binned SAH BVH builder using AVX intrinsics
@@ -74,9 +66,11 @@ This version of the library includes the following functionality:
 * Collapse to 4-wide and 8-wide BVH
 * Conversion of 4-wide BVH to GPU-friendly 64-byte quantized format
 * Single-ray and packet traversal
+* Fast triangle intersection: Implements the 2016 paper by [Baldwin & Weber](https://jcgt.org/published/0005/03/03/paper.pdf)
 * OpenCL traversal: Aila & Laine, 4-way quantized, CWBVH
-* Support for WASM / EMSCRIPTEN, g++, clang, Visual Studio.
-* Optional user-defined memory allocation, by [Thierry Cantenot](https://github.com/tcantenot). 
+* Support for WASM / EMSCRIPTEN, g++, clang, Visual Studio
+* Optional user-defined memory allocation, by [Thierry Cantenot](https://github.com/tcantenot)
+* 'SpeedTest' tool that times and validates all (well, most) traversal kernels.
 
 The current version of the library is rapidly gaining functionality. Please expect changes to the interface.
 
