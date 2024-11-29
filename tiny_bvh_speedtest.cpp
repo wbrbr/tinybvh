@@ -7,7 +7,7 @@
 #define SCRHEIGHT	600
 
 // scene selection
-// #define LOADSPONZA
+#define LOADSPONZA
 
 // GPU ray tracing
 #define ENABLE_OPENCL
@@ -22,9 +22,9 @@
 #define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_SOA2WAY_ST
 #define TRAVERSE_4WAY
-#define TRAVERSE_CWBVH
-#define TRAVERSE_BVH4
-#define TRAVERSE_BVH8
+// #define TRAVERSE_CWBVH
+// #define TRAVERSE_BVH4
+// #define TRAVERSE_BVH8
 #define TRAVERSE_2WAY_MT
 #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_OPTIMIZED_ST
@@ -238,8 +238,8 @@ int main()
 	s.read( (char*)triangles, verts * 16 );
 #else
 	// generate a sphere flake scene
-	printf( "Creating sphere flake (%i tris).\n", verts / 3 );
 	sphere_flake( 0, 0, 0, 1.5f );
+	printf( "Creating sphere flake (%i tris).\n", verts / 3 );
 #endif
 
 	// setup view pyramid for a pinhole camera: 
@@ -619,7 +619,11 @@ int main()
 	bvh.Convert( BVH::BASIC_BVH8, BVH::CWBVH );
 	// create OpenCL buffers for the BVH data calculated by tiny_bvh.h
 	tinyocl::Buffer cwbvhNodes( bvh.usedCWBVHBlocks * sizeof( tinybvh::bvhvec4 ), bvh.bvh8Compact );
+#ifdef CWBVH_COMPRESSED_TRIS
+	tinyocl::Buffer cwbvhTris( bvh.idxCount * 4 * sizeof( tinybvh::bvhvec4 ), bvh.bvh8Tris );
+#else
 	tinyocl::Buffer cwbvhTris( bvh.idxCount * 3 * sizeof( tinybvh::bvhvec4 ), bvh.bvh8Tris );
+#endif
 	// synchronize the host-side data to the gpu side
 	cwbvhNodes.CopyToDevice();
 	cwbvhTris.CopyToDevice();
