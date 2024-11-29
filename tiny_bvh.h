@@ -88,6 +88,11 @@ THE SOFTWARE.
 #define C_INT	1
 #define C_TRAV	1
 
+// CWBVH triangle format: doesn't seem to help on GPU?
+// #define CWBVH_COMPRESSED_TRIS
+// BVH4 triangle format
+#define BVH4_GPU_COMPRESSED_TRIS
+
 // include fast AVX BVH builder
 #if defined(__x86_64__) || defined(_M_X64) || defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
 #define BVH_USEAVX
@@ -1260,12 +1265,18 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 				for (unsigned j = 0; j < childNode[i]->triCount; j++)
 				{
 					unsigned t = triIdx[childNode[i]->firstTri + j];
+				#ifdef BVH4_GPU_COMPRESSED_TRIS
+					PrecomputeTriangle( verts + t * 3, (float*)&bvh4Alt[newAlt4Ptr] );
+					bvh4Alt[newAlt4Ptr + 3] = bvhvec4( 0, 0, 0, *(float*)&t );
+					newAlt4Ptr += 4;
+				#else
 					bvhvec4 v0 = verts[t * 3 + 0];
 					bvh4Alt[newAlt4Ptr + 1] = verts[t * 3 + 1] - v0;
 					bvh4Alt[newAlt4Ptr + 2] = verts[t * 3 + 2] - v0;
 					v0.w = *(float*)&t; // as_float
 					bvh4Alt[newAlt4Ptr + 0] = v0;
 					newAlt4Ptr += 3;
+				#endif
 				}
 			}
 			// process interior nodes
@@ -1486,7 +1497,7 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 		{
 			FATAL_ERROR_IF( bvh8Node == 0, "BVH::Convert( BASIC_BVH8, CWBVH ), bvh8Node == 0." );
 			bvh8Compact = (bvhvec4*)AlignedAlloc( spaceNeeded * 16 );
-			bvh8Tris = (bvhvec4*)AlignedAlloc( idxCount * 3 * 16 );
+			bvh8Tris = (bvhvec4*)AlignedAlloc( idxCount * 4 * 16 );
 			allocatedCWBVHBlocks = spaceNeeded;
 		}
 		memset( bvh8Compact, 0, spaceNeeded * 16 );
@@ -1583,11 +1594,17 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 				for (unsigned j = 0; j < tcount; j++)
 				{
 					int primitiveIndex = triIdx[child->firstTri + j];
+				#ifdef CWBVH_COMPRESSED_TRIS
+					PrecomputeTriangle( verts + primitiveIndex * 3, (float*)&bvh8Tris[triDataPtr] );
+					bvh8Tris[triDataPtr + 3] = bvhvec4( 0, 0, 0, *(float*)&primitiveIndex );
+					triDataPtr += 4;
+				#else
 					bvhvec4 t = verts[primitiveIndex * 3 + 0];
 					t.w = *(float*)&primitiveIndex;
 					bvh8Tris[triDataPtr++] = t;
 					bvh8Tris[triDataPtr++] = verts[primitiveIndex * 3 + 1];
 					bvh8Tris[triDataPtr++] = verts[primitiveIndex * 3 + 2];
+				#endif
 				}
 			}
 			unsigned char exyzAndimask[4] = { *(unsigned char*)&ex, *(unsigned char*)&ey, *(unsigned char*)&ez, imask };
@@ -2049,10 +2066,10 @@ bool BVH::IsOccluded( const Ray& ray, const BVHLayout layout ) const
 	{
 	case WALD_32BYTE: return IsOccluded_Wald32Byte( ray );
 	case AILA_LAINE: return IsOccluded_AilaLaine( ray );
-#if defined BVH_USEAVX
+	#if defined BVH_USEAVX
 	case ALT_SOA: return IsOccluded_AltSoA( ray );
 	case BVH4_AFRA: return IsOccluded_Afra( ray );
-#endif
+	#endif
 	default:
 		// For now, implemented using Intersect, so we have the interface in
 		// place. TODO: make specialized code, which will be faster.
@@ -3065,13 +3082,13 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 		if (dist1 == 1e30f)
 		{
 			if (stackPtr == 0) break; else node = stack[--stackPtr];
-	}
+		}
 		else
 		{
 			node = alt2Node + lidx;
 			if (dist2 != 1e30f) stack[stackPtr++] = alt2Node + ridx;
 		}
-}
+	}
 	return steps;
 }
 
@@ -3154,13 +3171,13 @@ bool BVH::IsOccluded_AltSoA( const Ray& ray ) const
 		if (dist1 == 1e30f)
 		{
 			if (stackPtr == 0) break; else node = stack[--stackPtr];
-	}
+		}
 		else
 		{
 			node = alt2Node + lidx;
 			if (dist2 != 1e30f) stack[stackPtr++] = alt2Node + ridx;
 		}
-}
+	}
 	return steps;
 }
 
@@ -3293,7 +3310,21 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 		else tgroup = ngroup, ngroup = bvhuint2( 0 );
 		while (tgroup.y != 0)
 		{
-			int triangleIndex = __bfind( tgroup.y );
+			unsigned triangleIndex = __bfind( tgroup.y );
+		#ifdef CWBVH_COMPRESSED_TRIS
+			const float* T = (float*)&blasTris[tgroup.x + triangleIndex * 4];
+			const float transS = T[8] * ray.O.x + T[9] * ray.O.y + T[10] * ray.O.z + T[11];
+			const float transD = T[8] * ray.D.x + T[9] * ray.D.y + T[10] * ray.D.z;
+			const float ta = -transS / transD;
+			if (ta > 0 && ta < ray.hit.t)
+			{
+				const bvhvec3 wr = ray.O + ta * ray.D;
+				const float u = T[0] * wr.x + T[1] * wr.y + T[2] * wr.z + T[3];
+				const float v = T[4] * wr.x + T[5] * wr.y + T[6] * wr.z + T[7];
+				const bool hit = u >= 0 && v >= 0 && u + v < 1;
+				if (hit) triangleuv = bvhvec2( u, v ), tmax = ta, hitAddr = *(unsigned*)&T[15];
+			}
+		#else
 			int triAddr = tgroup.x + triangleIndex * 3;
 			const bvhvec3 v0 = blasTris[triAddr];
 			const bvhvec3 edge1 = bvhvec3( blasTris[triAddr + 1] ) - v0;
@@ -3320,6 +3351,7 @@ int BVH::Intersect_CWBVH( Ray& ray ) const
 					}
 				}
 			}
+		#endif
 			tgroup.y -= 1 << triangleIndex;
 		}
 		if (ngroup.y <= 0x00FFFFFF)

@@ -1,5 +1,8 @@
 // gpu-side code for ray traversal
 
+// #define CWBVH_COMPRESSED_TRIS // sync with tiny_bvh.h
+#define BVH4_GPU_COMPRESSED_TRIS // sync with tiny_bvh.h
+
 struct Ray
 {
 	// data is defined here as 16-byte values to encourage the compilers
@@ -243,7 +246,26 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 		while (leaf < leafs)
 		{
 			const unsigned leafInfo = smem[smBase + leaf];
-			unsigned thisTri = (leafInfo & 0xffff) + offset + prim * 3;
+		#ifdef BVH4_GPU_COMPRESSED_TRIS
+			const unsigned thisTri = (leafInfo & 0xffff) + offset + prim * 4;
+			const float4 T2 = alt4Node[thisTri + 2];
+			const float transS = T2.x * O.x + T2.y * O.y + T2.z * O.z + T2.w;
+			const float transD = T2.x * D.x + T2.y * D.y + T2.z * D.z;
+			const float d = -transS / transD;
+			const unsigned triCount = (leafInfo >> 16) & 0x7fff;
+			if (++prim == triCount) prim = 0, leaf++;
+			if (d > 0 && d < hit.x)
+			{
+				const float4 T0 = alt4Node[thisTri + 0];
+				const float4 T1 = alt4Node[thisTri + 1];
+				const float3 I = O + d * D;
+				const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
+				const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
+				const bool trihit = u >= 0 && v >= 0 && u + v < 1;
+				if (trihit) hit = (float4)(d, u, v, as_uint( alt4Node[thisTri + 3].w ) );
+			}
+		#else
+			const unsigned thisTri = (leafInfo & 0xffff) + offset + prim * 3;
 			const float4 edge2 = alt4Node[thisTri + 2];
 			const float4 edge1 = alt4Node[thisTri + 1];
 			const float4 v0 = alt4Node[thisTri];
@@ -262,6 +284,7 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 			const float d = f * dot( edge2.xyz, q );
 			if (d <= 0.0f || d > hit.x) continue;
 			hit = (float4)(d, u, v, v0.w);
+		#endif
 		}
 		// continue with nearest node or first node on the stack
 		if (nextNode) offset = nextNode; else
@@ -336,7 +359,7 @@ inline unsigned sign_extend_s8x4( const unsigned i )
 // kernel
 // based on CUDA code by AlanWBFT https://github.com/AlanIWBFT
 
-void kernel traverse_cwbvh( global float4* cwbvhNodes, global float4* cwbvhTris, global struct Ray* rayData )
+void kernel traverse_cwbvh( global const float4* cwbvhNodes, global const float4* cwbvhTris, global struct Ray* rayData )
 {
 	// initialize ray
 	const unsigned threadId = get_global_id( 0 );
@@ -509,6 +532,29 @@ void kernel traverse_cwbvh( global float4* cwbvhNodes, global float4* cwbvhTris,
 		else tgroup = ngroup, ngroup = (uint2)(0);
 		while (tgroup.y != 0)
 		{
+		#ifdef CWBVH_COMPRESSED_TRIS
+			// Fast intersection of triangle data for the algorithm in:
+			// "Fast Ray-Triangle Intersections by Coordinate Transformation"
+			// Baldwin & Weber, 2016.
+			const unsigned triangleIndex = __bfind( tgroup.y ), triAddr = tgroup.x + triangleIndex * 4;
+			const float4 T2 = cwbvhTris[triAddr + 2];
+			const float transS = T2.x * O4.x + T2.y * O4.y + T2.z * O4.z + T2.w;
+			const float transD = T2.x * D4.x + T2.y * D4.y + T2.z * D4.z;
+			const float d = -transS / transD;
+			if (d > 0 && d < tmax)
+			{
+				const float4 T0 = cwbvhTris[triAddr + 0];
+				const float4 T1 = cwbvhTris[triAddr + 1];
+				const float4 I = O4 + d * D4;
+				const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
+				const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
+				const bool hit = u >= 0 && v >= 0 && u + v < 1;
+				if (hit) uv = (float2)( u, v ), tmax = d, hitAddr = as_uint( cwbvhTris[triAddr + 3].w );
+			}
+		#else
+			// Möller-Trumbore intersection; triangles are stored as 3x16 bytes,
+			// with the original primitive index in the (otherwise unused) w 
+			// component of vertex 0.
 			const int triangleIndex = __bfind( tgroup.y ), triAddr = tgroup.x + triangleIndex * 3;
 			const float3 v0 = cwbvhTris[triAddr].xyz;
 			const float3 e1 = cwbvhTris[triAddr + 1].xyz - v0;
@@ -535,6 +581,7 @@ void kernel traverse_cwbvh( global float4* cwbvhNodes, global float4* cwbvhTris,
 					}
 				}
 			}
+		#endif
 			tgroup.y -= 1 << triangleIndex;
 		}
 		if (ngroup.y <= 0x00FFFFFF)
