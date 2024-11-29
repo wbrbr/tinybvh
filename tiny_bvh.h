@@ -536,6 +536,7 @@ public:
 		return n.isLeaf() ? n.triCount : (PrimCount( n.leftFirst ) + PrimCount( n.leftFirst + 1 ));
 	}
 	void Compact( const BVHLayout layout /* must be WALD_32BYTE or VERBOSE */ );
+	void BuildQuick( const bvhvec4* vertices, const unsigned primCount );
 	void Build( const bvhvec4* vertices, const unsigned primCount );
 	void BuildHQ( const bvhvec4* vertices, const unsigned primCount );
 #ifdef BVH_USEAVX
@@ -662,6 +663,90 @@ void BVH::AlignedFree( void* ptr )
 {
 	if (context.free)
 		context.free( ptr, context.userdata );
+}
+
+// Basic single-function BVH builder, using mid-point splits.
+// This builder yields a correct BVH in little time, but the quality of the
+// structure will be low. Use this only if build time is the bottleneck in
+// your application (e.g., when you need to trace few rays).
+void BVH::BuildQuick( const bvhvec4* vertices, const unsigned primCount )
+{
+	// allocate on first build
+	const unsigned spaceNeeded = primCount * 2; // upper limit
+	if (allocatedBVHNodes < spaceNeeded)
+	{
+		AlignedFree( bvhNode );
+		AlignedFree( triIdx );
+		AlignedFree( fragment );
+		bvhNode = (BVHNode*)AlignedAlloc( spaceNeeded * sizeof( BVHNode ) );
+		allocatedBVHNodes = spaceNeeded;
+		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
+		triIdx = (unsigned*)AlignedAlloc( primCount * sizeof( unsigned ) );
+		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
+		fragment = (Fragment*)AlignedAlloc( primCount * sizeof( Fragment ) );
+	}
+	else FATAL_ERROR_IF( !rebuildable, "BVH::BuildQuick( .. ), bvh not rebuildable." );
+	idxCount = triCount = primCount;
+	// reset node pool
+	unsigned newNodePtr = 2;
+	// assign all triangles to the root node
+	BVHNode& root = bvhNode[0];
+	root.leftFirst = 0, root.triCount = triCount, root.aabbMin = bvhvec3( 1e30f ), root.aabbMax = bvhvec3( -1e30f );
+	// initialize fragments and initialize root node bounds
+	for (unsigned i = 0; i < triCount; i++)
+	{
+		fragment[i].bmin = tinybvh_min( tinybvh_min( verts[i * 3], verts[i * 3 + 1] ), verts[i * 3 + 2] );
+		fragment[i].bmax = tinybvh_max( tinybvh_max( verts[i * 3], verts[i * 3 + 1] ), verts[i * 3 + 2] );
+		root.aabbMin = tinybvh_min( root.aabbMin, fragment[i].bmin );
+		root.aabbMax = tinybvh_max( root.aabbMax, fragment[i].bmax ), triIdx[i] = i;
+	}
+	// subdivide recursively
+	unsigned task[256], taskCount = 0, nodeIdx = 0;
+	while (1)
+	{
+		while (1)
+		{
+			BVHNode& node = bvhNode[nodeIdx];
+			// in-place partition against midpoint on longest axis
+			unsigned j = node.leftFirst + node.triCount, src = node.leftFirst;
+			bvhvec3 extent = node.aabbMax - node.aabbMin;
+			unsigned axis = 0;
+			if (extent.y > extent.x && extent.y > extent.z) axis = 1;
+			if (extent.z > extent.x && extent.z > extent.y) axis = 2;
+			float splitPos = node.aabbMin[axis] + extent[axis] * 0.5f, centroid;
+			bvhvec3 lbmin( 1e30f ), lbmax( -1e30f ), rbmin( 1e30f ), rbmax( -1e30f ), fmin, fmax;
+			for (unsigned fi, i = 0; i < node.triCount; i++)
+			{
+				fi = triIdx[src], fmin = fragment[fi].bmin, fmax = fragment[fi].bmax;
+				centroid = (fmin[axis] + fmax[axis]) * 0.5f;
+				if (centroid < splitPos) 
+					lbmin = tinybvh_min( lbmin, fmin ), lbmax = tinybvh_max( lbmax, fmax ), src++;
+				else 
+				{
+					rbmin = tinybvh_min( rbmin, fmin ), rbmax = tinybvh_max( rbmax, fmax );
+					tinybvh_swap( triIdx[src], triIdx[--j] );
+				}
+			}
+			// create child nodes
+			const unsigned leftCount = src - node.leftFirst, rightCount = node.triCount - leftCount;
+			if (leftCount == 0 || rightCount == 0) break; // split did not work out.
+			const int lci = newNodePtr++, rci = newNodePtr++;
+			bvhNode[lci].aabbMin = lbmin, bvhNode[lci].aabbMax = lbmax;
+			bvhNode[lci].leftFirst = node.leftFirst, bvhNode[lci].triCount = leftCount;
+			bvhNode[rci].aabbMin = rbmin, bvhNode[rci].aabbMax = rbmax;
+			bvhNode[rci].leftFirst = j, bvhNode[rci].triCount = rightCount;
+			node.leftFirst = lci, node.triCount = 0;
+			// recurse
+			task[taskCount++] = rci, nodeIdx = lci;
+		}
+		// fetch subdivision task from stack
+		if (taskCount == 0) break; else nodeIdx = task[--taskCount];
+	}
+	// all done.
+	refittable = true; // not using spatial splits: can refit this BVH
+	frag_min_flipped = false; // did not use AVX for binning
+	may_have_holes = false; // the reference builder produces a continuous list of nodes
+	usedBVHNodes = newNodePtr;
 }
 
 // Basic single-function binned-SAH-builder. 

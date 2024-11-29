@@ -7,16 +7,17 @@
 #define SCRHEIGHT	600
 
 // scene selection
-#define LOADSPONZA
+// #define LOADSPONZA
 
 // GPU ray tracing
 #define ENABLE_OPENCL
 
 // tests to perform
+#define BUILD_MIDPOINT
 #define BUILD_REFERENCE
 #define BUILD_AVX
-#define BUILD_NEON
-#define BUILD_SBVH
+// #define BUILD_NEON
+// #define BUILD_SBVH
 #define TRAVERSE_2WAY_ST
 #define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_SOA2WAY_ST
@@ -28,8 +29,8 @@
 #define TRAVERSE_2WAY_MT_PACKET
 #define TRAVERSE_OPTIMIZED_ST
 #define TRAVERSE_4WAY_OPTIMIZED
-#define EMBREE_BUILD // win64-only for now.
-#define EMBREE_TRAVERSE // win64-only for now.
+// #define EMBREE_BUILD // win64-only for now.
+// #define EMBREE_TRAVERSE // win64-only for now.
 
 // GPU rays: only if ENABLE_OPENCL is defined.
 #define GPU_2WAY
@@ -64,7 +65,7 @@ ALIGNED( 64 ) bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
 #endif
 int verts = 0;
 BVH bvh;
-float traceTime, * refDist = 0, * refDistFull = 0;
+float traceTime, buildTime, * refDist = 0, * refDistFull = 0;
 
 #if defined EMBREE_BUILD || defined EMBREE_TRAVERSE
 #include "embree4/rtcore.h"
@@ -283,13 +284,25 @@ int main()
 	printf( "warming caches...\n" );
 	bvh.Build( triangles, verts / 3 );
 
+#ifdef BUILD_MIDPOINT
+
+	// measure single-core bvh construction time - quick bvh builder
+	printf( "- quick bvh builder: " );
+	t.reset();
+	for (int pass = 0; pass < 3; pass++) bvh.BuildQuick( triangles, verts / 3 );
+	buildTime = t.elapsed() / 3.0f;
+	printf( "%7.2fms for %7i triangles ", buildTime * 1000.0f, verts / 3 );
+	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
+
+#endif
+
 #ifdef BUILD_REFERENCE
 
 	// measure single-core bvh construction time - reference builder
 	printf( "- reference builder: " );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++) bvh.Build( triangles, verts / 3 );
-	float buildTime = t.elapsed() / 3.0f;
+	buildTime = t.elapsed() / 3.0f;
 	printf( "%7.2fms for %7i triangles ", buildTime * 1000.0f, verts / 3 );
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 
@@ -302,8 +315,8 @@ int main()
 	printf( "- fast AVX builder:  " );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++) bvh.BuildAVX( triangles, verts / 3 );
-	float buildTimeAVX = t.elapsed() / 3.0f;
-	printf( "%7.2fms for %7i triangles ", buildTimeAVX * 1000.0f, verts / 3 );
+	buildTime = t.elapsed() / 3.0f;
+	printf( "%7.2fms for %7i triangles ", buildTime * 1000.0f, verts / 3 );
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 
 #endif
@@ -316,8 +329,8 @@ int main()
 	printf( "- fast NEON builder: " );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++) bvh.BuildNEON( triangles, verts / 3 );
-	float buildTimeNEON = t.elapsed() / 3.0f;
-	printf( "%7.2fms for %7i triangles ", buildTimeNEON * 1000.0f, verts / 3 );
+	buildTime = t.elapsed() / 3.0f;
+	printf( "%7.2fms for %7i triangles ", buildTime * 1000.0f, verts / 3 );
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 
 #endif
@@ -329,8 +342,8 @@ int main()
 	printf( "- HQ (SBVH) builder: " );
 	t.reset();
 	for (int pass = 0; pass < 3; pass++) bvh.BuildHQ( triangles, verts / 3 );
-	float buildTimeHQ = t.elapsed() / 3.0f;
-	printf( "%7.2fms for %7i triangles ", buildTimeHQ * 1000.0f, verts / 3 );
+	buildTime = t.elapsed() / 3.0f;
+	printf( "%7.2fms for %7i triangles ", buildTime * 1000.0f, verts / 3 );
 	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHNodes, bvh.SAHCost() );
 
 #endif
@@ -357,8 +370,8 @@ int main()
 	rtcSetSceneBuildQuality( embreeScene, RTC_BUILD_QUALITY_HIGH );
 	t.reset();
 	rtcCommitScene( embreeScene ); // assuming this is where (supposedly threaded) BVH build happens.
-	float embreeBuildTime = t.elapsed();
-	printf( "%7.2fms for %7i triangles\n", embreeBuildTime * 1000.0f, verts / 3 );
+	buildTime = t.elapsed();
+	printf( "%7.2fms for %7i triangles\n", buildTime * 1000.0f, verts / 3 );
 
 #endif
 
@@ -513,7 +526,7 @@ int main()
 		for (int i = 0; i < 10000; i++) bvh.Intersect( fullBatch[batchStart + i] );
 	}
 	refDistFull = new float[Nfull];
-	for (unsigned i = 0; i < Nfull; i++) refDistFull[i] = fullBatch[i].hit.t;
+	for (int i = 0; i < Nfull; i++) refDistFull[i] = fullBatch[i].hit.t;
 
 #ifdef GPU_2WAY
 
