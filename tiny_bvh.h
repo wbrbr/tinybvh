@@ -23,6 +23,7 @@ THE SOFTWARE.
 */
 
 // 2024
+// Nov 28: version 1.0.0 : Validation in speedtest, faster tri test.
 // Nov 25: version 0.9.8 : FATAL_ERROR_IF interface.
 // Nov 22: version 0.9.7 : Bug fix release.
 // Nov 21: version 0.9.6 : Interface for IsOccluded and batches.
@@ -549,7 +550,7 @@ public:
 #elif defined BVH_USENEON
 	void BuildNEON( const bvhvec4* vertices, const unsigned primCount );
 #endif
-	void Build( const bvhaabb* aabbs, const unsigned aabbCount );
+	void BuildTLAS( const bvhaabb* aabbs, const unsigned aabbCount );
 	void Convert( const BVHLayout from, const BVHLayout to, const bool deleteOriginal = false );
 	void SplitLeafs( const unsigned maxPrims = 1 ); // operates on VERBOSE layout
 	void SplitBVH8Leaf( const unsigned nodeIdx, const unsigned maxPrims = 1 ); // operates on BVH8 layout
@@ -594,7 +595,6 @@ private:
 	unsigned CountSubtreeTris( const unsigned nodeIdx, unsigned* counters );
 	void MergeSubtree( const unsigned nodeIdx, unsigned* newIdx, unsigned& newIdxPtr );
 public:
-	BVHContext context;				// Context used to provide user-defined allocation functions
 	bvhvec4* verts = 0;				// pointer to input primitive array: 3x16 bytes per tri
 	unsigned triCount = 0;			// number of primitives in tris
 	Fragment* fragment = 0;			// input primitive bounding boxes
@@ -617,6 +617,7 @@ public:
 	bool may_have_holes = false;	// Threaded builds and MergeLeafs produce BVHs with unused nodes.
 	bool bvh_over_aabbs = false;	// A BVH over AABBs is useful for e.g. TLAS traversal.
 	BuildFlags buildFlag = NONE;	// Hint to the builder.
+	BVHContext context;				// Context used to provide user-defined allocation functions
 	// keep track of allocated buffer size to avoid 
 	// repeated allocation during layout conversion.
 	unsigned allocatedBVHNodes = 0;
@@ -637,6 +638,20 @@ public:
 	unsigned usedAlt4bNodes = 0;
 	unsigned usedBVH8Nodes = 0;
 	unsigned usedCWBVHBlocks = 0;
+};
+
+// BLASInstance: A TLAS is built over BLAS instances, where a single BLAS can be
+// used with multiple transforms, and multiple BLASses can be combined in a complex
+// scene. The TLAS is built over the world-space AABBs of the BLAS root nodes. 
+class BLASInstance
+{
+public:
+	void Update();					// Update the world bounds based on the current transform.
+	BVH* blas = 0;					// Bottom-level acceleration structure.
+	bvhaabb worldBounds;			// World-space AABB over the transformed blas root node.
+	float transform[16];			// 4x4 matrix transform for the instance.
+	bvhvec3 TransformPoint( const bvhvec3& v ) const;
+	bvhvec3 TransformVector( const bvhvec3& v ) const;
 };
 
 } // namespace tinybvh
@@ -672,8 +687,23 @@ void BVH::AlignedFree( void* ptr )
 		context.free( ptr, context.userdata );
 }
 
+void BLASInstance::Update()
+{
+	// transform the eight corners of the root node aabb using the instance
+	// transform and calculate the worldspace aabb over these.
+	worldBounds.minBounds = bvhvec3( 1e30f ), worldBounds.maxBounds = bvhvec3( -1e30f );
+	bvhvec3 bmin = blas->bvhNode[0].aabbMin, bmax = blas->bvhNode[0].aabbMax;
+	for( int i = 0; i < 8; i++ )
+	{
+		const bvhvec3 p( i & 1 ? bmax.x : bmin.x, i & 2 ? bmax.y : bmin.y, i & 4 ? bmax.z : bmin.z );
+		const bvhvec3 t = TransformPoint( p );
+		worldBounds.minBounds = tinybvh_min( worldBounds.minBounds, p ); 
+		worldBounds.maxBounds = tinybvh_max( worldBounds.maxBounds, p ); 
+	}
+}
+
 // BVH builder entry point for arrays of aabbs.
-void BVH::Build( const bvhaabb* aabbs, const unsigned aabbCount )
+void BVH::BuildTLAS( const bvhaabb* aabbs, const unsigned aabbCount )
 {
 	// the aabb array must be cacheline aligned.
 	FATAL_ERROR_IF( ((long long)(void*)aabbs & 31) != 0, "BVH::Build( bvhaabb* ), array not cacheline aligned." );
@@ -737,9 +767,9 @@ void BVH::BuildQuick( const bvhvec4* vertices, const unsigned primCount )
 			{
 				fi = triIdx[src], fmin = fragment[fi].bmin, fmax = fragment[fi].bmax;
 				centroid = (fmin[axis] + fmax[axis]) * 0.5f;
-				if (centroid < splitPos) 
+				if (centroid < splitPos)
 					lbmin = tinybvh_min( lbmin, fmin ), lbmax = tinybvh_max( lbmax, fmax ), src++;
-				else 
+				else
 				{
 					rbmin = tinybvh_min( rbmin, fmin ), rbmax = tinybvh_max( rbmax, fmax );
 					tinybvh_swap( triIdx[src], triIdx[--j] );
@@ -798,7 +828,7 @@ void BVH::Build( const bvhvec4* vertices, const unsigned primCount )
 	BVHNode& root = bvhNode[0];
 	root.leftFirst = 0, root.triCount = triCount, root.aabbMin = bvhvec3( 1e30f ), root.aabbMax = bvhvec3( -1e30f );
 	// initialize fragments and initialize root node bounds
-	if (verts) 
+	if (verts)
 	{
 		// building a BVH over triangles specified as three 16-byte vertices each.
 		for (unsigned i = 0; i < triCount; i++)
@@ -809,7 +839,7 @@ void BVH::Build( const bvhvec4* vertices, const unsigned primCount )
 			root.aabbMax = tinybvh_max( root.aabbMax, fragment[i].bmax ), triIdx[i] = i;
 		}
 	}
-	else 
+	else
 	{
 		// we are building the BVH over aabbs we received from ::Build( tinyaabb* ): vertices == 0.
 		for (unsigned i = 0; i < triCount; i++)
@@ -4101,6 +4131,25 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 //        H E L P E R S
 // 
 // ============================================================================
+
+// TransformPoint
+bvhvec3 BLASInstance::TransformPoint( const bvhvec3& v ) const
+{
+	const bvhvec3 res(
+		transform[0] * v.x + transform[1] * v.y + transform[2] * v.z + transform[3],
+		transform[4] * v.x + transform[5] * v.y + transform[6] * v.z + transform[7],
+		transform[8] * v.x + transform[9] * v.y + transform[10] * v.z + transform[11] );
+	const float w = transform[12] * v.x + transform[13] * v.y + transform[14] * v.z + transform[15];
+	if (w == 1) return res; else return res * (1.f / w);
+}
+
+// TransformVector - skips translation. Assumes orthonormal transform, for now.
+bvhvec3 BLASInstance::TransformVector( const bvhvec3& v ) const
+{
+	return bvhvec3( transform[0] * v.x + transform[1] * v.y + transform[2] * v.z,
+		transform[4] * v.x + transform[5] * v.y + transform[6] * v.z,
+		transform[8] * v.x + transform[9] * v.y + transform[10] * v.z );
+}
 
 // IntersectTri
 void BVH::IntersectTri( Ray& ray, const unsigned idx ) const
