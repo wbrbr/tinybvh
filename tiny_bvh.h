@@ -232,6 +232,11 @@ struct bvhuint2
 	bvhuint2( const unsigned a ) : x( a ), y( a ) {}
 	unsigned x, y;
 };
+struct bvhaabb
+{
+	bvhvec3 minBounds; unsigned dummy1;
+	bvhvec3 maxBounds; unsigned dummy2;
+};
 
 #ifdef TINYBVH_IMPLEMENTATION
 bvhvec4::bvhvec4( const bvhvec3& a ) { x = a.x; y = a.y; z = a.z; w = 0; }
@@ -544,6 +549,7 @@ public:
 #elif defined BVH_USENEON
 	void BuildNEON( const bvhvec4* vertices, const unsigned primCount );
 #endif
+	void Build( const bvhaabb* aabbs, const unsigned aabbCount );
 	void Convert( const BVHLayout from, const BVHLayout to, const bool deleteOriginal = false );
 	void SplitLeafs( const unsigned maxPrims = 1 ); // operates on VERBOSE layout
 	void SplitBVH8Leaf( const unsigned nodeIdx, const unsigned maxPrims = 1 ); // operates on BVH8 layout
@@ -609,6 +615,7 @@ public:
 	bool refittable = true;			// Refits are safe only if the tree has no spatial splits.
 	bool frag_min_flipped = false;	// AVX builders flip aabb min.
 	bool may_have_holes = false;	// Threaded builds and MergeLeafs produce BVHs with unused nodes.
+	bool bvh_over_aabbs = false;	// A BVH over AABBs is useful for e.g. TLAS traversal.
 	BuildFlags buildFlag = NONE;	// Hint to the builder.
 	// keep track of allocated buffer size to avoid 
 	// repeated allocation during layout conversion.
@@ -663,6 +670,17 @@ void BVH::AlignedFree( void* ptr )
 {
 	if (context.free)
 		context.free( ptr, context.userdata );
+}
+
+// BVH builder entry point for arrays of aabbs.
+void BVH::Build( const bvhaabb* aabbs, const unsigned aabbCount )
+{
+	// the aabb array must be cacheline aligned.
+	FATAL_ERROR_IF( ((long long)(void*)aabbs & 31) != 0, "BVH::Build( bvhaabb* ), array not cacheline aligned." );
+	// take the array and process it
+	fragment = (Fragment*)aabbs;
+	// build the BVH
+	Build( (bvhvec4*)0, aabbCount ); // TODO: for larger scenes this can also be done with BuildAVX/BuildNEON.
 }
 
 // Basic single-function BVH builder, using mid-point splits.
@@ -769,7 +787,8 @@ void BVH::Build( const bvhvec4* vertices, const unsigned primCount )
 		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
 		triIdx = (unsigned*)AlignedAlloc( primCount * sizeof( unsigned ) );
 		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
-		fragment = (Fragment*)AlignedAlloc( primCount * sizeof( Fragment ) );
+		if (verts) fragment = (Fragment*)AlignedAlloc( primCount * sizeof( Fragment ) );
+		else FATAL_ERROR_IF( fragment == 0, "BVH::Build( 0, .. ), not called from ::Build( aabb )." );
 	}
 	else FATAL_ERROR_IF( !rebuildable, "BVH::Build( .. ), bvh not rebuildable." );
 	idxCount = triCount = primCount;
@@ -779,12 +798,25 @@ void BVH::Build( const bvhvec4* vertices, const unsigned primCount )
 	BVHNode& root = bvhNode[0];
 	root.leftFirst = 0, root.triCount = triCount, root.aabbMin = bvhvec3( 1e30f ), root.aabbMax = bvhvec3( -1e30f );
 	// initialize fragments and initialize root node bounds
-	for (unsigned i = 0; i < triCount; i++)
+	if (verts) 
 	{
-		fragment[i].bmin = tinybvh_min( tinybvh_min( verts[i * 3], verts[i * 3 + 1] ), verts[i * 3 + 2] );
-		fragment[i].bmax = tinybvh_max( tinybvh_max( verts[i * 3], verts[i * 3 + 1] ), verts[i * 3 + 2] );
-		root.aabbMin = tinybvh_min( root.aabbMin, fragment[i].bmin );
-		root.aabbMax = tinybvh_max( root.aabbMax, fragment[i].bmax ), triIdx[i] = i;
+		// building a BVH over triangles specified as three 16-byte vertices each.
+		for (unsigned i = 0; i < triCount; i++)
+		{
+			fragment[i].bmin = tinybvh_min( tinybvh_min( verts[i * 3], verts[i * 3 + 1] ), verts[i * 3 + 2] );
+			fragment[i].bmax = tinybvh_max( tinybvh_max( verts[i * 3], verts[i * 3 + 1] ), verts[i * 3 + 2] );
+			root.aabbMin = tinybvh_min( root.aabbMin, fragment[i].bmin );
+			root.aabbMax = tinybvh_max( root.aabbMax, fragment[i].bmax ), triIdx[i] = i;
+		}
+	}
+	else 
+	{
+		// we are building the BVH over aabbs we received from ::Build( tinyaabb* ): vertices == 0.
+		for (unsigned i = 0; i < triCount; i++)
+		{
+			root.aabbMin = tinybvh_min( root.aabbMin, fragment[i].bmin );
+			root.aabbMax = tinybvh_max( root.aabbMax, fragment[i].bmax ), triIdx[i] = i; // here: aabb index.
+		}
 	}
 	// subdivide recursively
 	unsigned task[256], taskCount = 0, nodeIdx = 0;
@@ -874,6 +906,7 @@ void BVH::Build( const bvhvec4* vertices, const unsigned primCount )
 	refittable = true; // not using spatial splits: can refit this BVH
 	frag_min_flipped = false; // did not use AVX for binning
 	may_have_holes = false; // the reference builder produces a continuous list of nodes
+	bvh_over_aabbs = (verts == 0); // bvh over aabbs is suitable as TLAS
 	usedBVHNodes = newNodePtr;
 }
 
