@@ -62,13 +62,7 @@ THE SOFTWARE.
 // More information about the BVH data structure:
 // https://jacco.ompf2.com/2022/04/13/how-to-build-a-bvh-part-1-basics
 
-// Further references:
-// - Parallel Spatial Splits in Bounding Volume Hierarchies:
-//   https://diglib.eg.org/items/f55715b1-9e56-4b40-af73-59d3dfba9fe7
-// - Heuristics for ray tracing using space subdivision:
-//   https://graphicsinterface.org/wp-content/uploads/gi1989-22.pdf
-// - Heuristic Ray Shooting Algorithms:
-//   https://dcgi.fel.cvut.cz/home/havran/DISSVH/phdthesis.html
+// Further references: See README.md
 
 // Author and contributors:
 // Jacco Bikker: BVH code and examples
@@ -502,9 +496,21 @@ public:
 		unsigned clipped = 0;		// Fragment is the result of clipping if > 0.
 		bool validBox() { return bmin.x < 1e30f; }
 	};
-	BVH( BVHContext ctx = {} ) : context( ctx )
+	// BLASInstance: A TLAS is built over BLAS instances, where a single BLAS can be
+	// used with multiple transforms, and multiple BLASses can be combined in a complex
+	// scene. The TLAS is built over the world-space AABBs of the BLAS root nodes. 
+	class BLASInstance
 	{
-	}
+	public:
+		BLASInstance( BVH* bvh ) : blas( bvh ) {}
+		void Update();				// Update the world bounds based on the current transform.
+		BVH* blas = 0;				// Bottom-level acceleration structure.
+		bvhaabb worldBounds;		// World-space AABB over the transformed blas root node.
+		float transform[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }; // identity
+		bvhvec3 TransformPoint( const bvhvec3& v ) const;
+		bvhvec3 TransformVector( const bvhvec3& v ) const;
+	};
+	BVH( BVHContext ctx = {} ) : context( ctx ) {}
 	~BVH()
 	{
 		AlignedFree( bvhNode );
@@ -551,6 +557,7 @@ public:
 	void BuildNEON( const bvhvec4* vertices, const unsigned primCount );
 #endif
 	void BuildTLAS( const bvhaabb* aabbs, const unsigned aabbCount );
+	void BuildTLAS( const BLASInstance* bvhs, const unsigned instCount );
 	void Convert( const BVHLayout from, const BVHLayout to, const bool deleteOriginal = false );
 	void SplitLeafs( const unsigned maxPrims = 1 ); // operates on VERBOSE layout
 	void SplitBVH8Leaf( const unsigned nodeIdx, const unsigned maxPrims = 1 ); // operates on BVH8 layout
@@ -558,6 +565,15 @@ public:
 	void Optimize( const unsigned iterations, const bool convertBack = true ); // operates on VERBOSE
 	void Refit( const BVHLayout layout = WALD_32BYTE, const unsigned nodeIdx = 0 );
 	int Intersect( Ray& ray, const BVHLayout layout = WALD_32BYTE ) const;
+	// IntersectTLAS: Interface is under construction. Current plan:
+	// * application constructs one or more BVHs (BLAS) using a layout of choice;
+	// * application instantiates one or more BVHInstances using the blasses;
+	// * application builds a WALD_32BYTE BVH (TLAS) over the array of BVHInstances;
+	// * applicaiton intersects the TLAS using IntersectTLAS;
+	// In the leafs of the TLAS, tiny_bvh finds a BVHInstance index. Using the index,
+	// the BLAS is found, the ray is transformed, and the appropriate Intersect_xxx
+	// method is called.
+	int IntersectTLAS( Ray& ray ) const;
 	bool IsOccluded( const Ray& ray, const BVHLayout layout = WALD_32BYTE ) const;
 	void BatchIntersect( Ray* rayBatch, const unsigned N,
 		const BVHLayout layout = WALD_32BYTE, const TraceDevice device = USE_CPU ) const;
@@ -640,20 +656,6 @@ public:
 	unsigned usedCWBVHBlocks = 0;
 };
 
-// BLASInstance: A TLAS is built over BLAS instances, where a single BLAS can be
-// used with multiple transforms, and multiple BLASses can be combined in a complex
-// scene. The TLAS is built over the world-space AABBs of the BLAS root nodes. 
-class BLASInstance
-{
-public:
-	void Update();					// Update the world bounds based on the current transform.
-	BVH* blas = 0;					// Bottom-level acceleration structure.
-	bvhaabb worldBounds;			// World-space AABB over the transformed blas root node.
-	float transform[16];			// 4x4 matrix transform for the instance.
-	bvhvec3 TransformPoint( const bvhvec3& v ) const;
-	bvhvec3 TransformVector( const bvhvec3& v ) const;
-};
-
 } // namespace tinybvh
 
 // ============================================================================
@@ -687,18 +689,18 @@ void BVH::AlignedFree( void* ptr )
 		context.free( ptr, context.userdata );
 }
 
-void BLASInstance::Update()
+void BVH::BLASInstance::Update()
 {
 	// transform the eight corners of the root node aabb using the instance
 	// transform and calculate the worldspace aabb over these.
 	worldBounds.minBounds = bvhvec3( 1e30f ), worldBounds.maxBounds = bvhvec3( -1e30f );
 	bvhvec3 bmin = blas->bvhNode[0].aabbMin, bmax = blas->bvhNode[0].aabbMax;
-	for( int i = 0; i < 8; i++ )
+	for (int i = 0; i < 8; i++)
 	{
 		const bvhvec3 p( i & 1 ? bmax.x : bmin.x, i & 2 ? bmax.y : bmin.y, i & 4 ? bmax.z : bmin.z );
 		const bvhvec3 t = TransformPoint( p );
-		worldBounds.minBounds = tinybvh_min( worldBounds.minBounds, p ); 
-		worldBounds.maxBounds = tinybvh_max( worldBounds.maxBounds, p ); 
+		worldBounds.minBounds = tinybvh_min( worldBounds.minBounds, p );
+		worldBounds.maxBounds = tinybvh_max( worldBounds.maxBounds, p );
 	}
 }
 
@@ -709,8 +711,24 @@ void BVH::BuildTLAS( const bvhaabb* aabbs, const unsigned aabbCount )
 	FATAL_ERROR_IF( ((long long)(void*)aabbs & 31) != 0, "BVH::Build( bvhaabb* ), array not cacheline aligned." );
 	// take the array and process it
 	fragment = (Fragment*)aabbs;
+	triCount = aabbCount;
 	// build the BVH
-	Build( (bvhvec4*)0, aabbCount ); // TODO: for larger scenes this can also be done with BuildAVX/BuildNEON.
+	Build( (bvhvec4*)0, aabbCount ); // TODO: for very large scenes, use BuildAVX. Mind fragment sign flip!
+}
+
+void BVH::BuildTLAS( const BLASInstance* bvhs, const unsigned instCount )
+{
+	if (!fragment) fragment = (Fragment*)AlignedAlloc( instCount );
+	else FATAL_ERROR_IF( instCount != triCount, "BVH::BuildTLAS( .. ), blas count changed." );
+	// copy relevant data from instance array
+	triCount = instCount;
+	for (unsigned i = 0; i < instCount; i++)
+	{
+		fragment[i].bmin = bvhs[i].worldBounds.minBounds;
+		fragment[i].primIdx = i;
+		fragment[i].bmax = bvhs[i].worldBounds.maxBounds;
+		fragment[i].clipped = 0;
+	}
 }
 
 // Basic single-function BVH builder, using mid-point splits.
@@ -1484,9 +1502,9 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 			if (stackPtr == 0) break;
 			nodeIdx = stack[--stackPtr];
 			retValPos = stack[--stackPtr];
-		}
+				}
 		usedAlt4aBlocks = newAlt4Ptr;
-	}
+			}
 	else if (from == BASIC_BVH4 && to == BVH4_AFRA)
 	{
 		// Convert a 4-wide BVH to a format suitable for CPU traversal.
@@ -1806,7 +1824,7 @@ void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOr
 		// For now all other conversions are invalid.
 		FATAL_ERROR_IF( true, "BVH::Convert( .. , .. ), unsupported conversion." );
 	}
-}
+		}
 
 int BVH::NodeCount( const BVHLayout layout ) const
 {
@@ -4133,7 +4151,7 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 // ============================================================================
 
 // TransformPoint
-bvhvec3 BLASInstance::TransformPoint( const bvhvec3& v ) const
+bvhvec3 BVH::BLASInstance::TransformPoint( const bvhvec3& v ) const
 {
 	const bvhvec3 res(
 		transform[0] * v.x + transform[1] * v.y + transform[2] * v.z + transform[3],
@@ -4144,7 +4162,7 @@ bvhvec3 BLASInstance::TransformPoint( const bvhvec3& v ) const
 }
 
 // TransformVector - skips translation. Assumes orthonormal transform, for now.
-bvhvec3 BLASInstance::TransformVector( const bvhvec3& v ) const
+bvhvec3 BVH::BLASInstance::TransformVector( const bvhvec3& v ) const
 {
 	return bvhvec3( transform[0] * v.x + transform[1] * v.y + transform[2] * v.z,
 		transform[4] * v.x + transform[5] * v.y + transform[6] * v.z,

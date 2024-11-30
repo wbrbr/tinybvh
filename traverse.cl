@@ -217,13 +217,106 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 		const float4 minyz4 = select( minxy4, maxtz4, isgreater( minxy4, maxtz4 ) );
 		const float4 tmax4 = select( minyz4, hit.xxxx, isgreater( minyz4, hit.xxxx ) );
 		dst4 = select( dst4, (float4)(1e30f), isgreater( dst4, tmax4 ) );
-		// sort intersection distances
+		// sort intersection distances - TODO: handle single-intersection case separately.
 		if (dst4.x < dst4.z) dst4 = dst4.zyxw, data3 = data3.zyxw; // bertdobbelaere.github.io/sorting_networks.html
 		if (dst4.y < dst4.w) dst4 = dst4.xwzy, data3 = data3.xwzy;
 		if (dst4.x < dst4.y) dst4 = dst4.yxzw, data3 = data3.yxzw;
 		if (dst4.z < dst4.w) dst4 = dst4.xywz, data3 = data3.xywz;
 		if (dst4.y < dst4.z) dst4 = dst4.xzyw, data3 = data3.xzyw;
 		// process results, starting with farthest child, so nearest ends on top of stack
+	#if 1
+		unsigned nextNode = 0;
+		if (dst4.x < 1e30f) 
+		{
+			if ((data3.x >> 31) == 0) nextNode = data3.x; else
+			{
+				const unsigned triCount = (data3.x >> 16) & 0x7fff;
+				for( int i = 0; i < triCount; i++ )
+				{
+					const unsigned thisTri = (data3.x & 0xffff) + offset + i * 4;
+					const float4 T2 = alt4Node[thisTri + 2];
+					const float transS = T2.x * O.x + T2.y * O.y + T2.z * O.z + T2.w;
+					const float transD = T2.x * D.x + T2.y * D.y + T2.z * D.z, d = -transS / transD;
+					if (d <= 0 || d >= hit.x) continue;
+					const float4 T0 = alt4Node[thisTri + 0], T1 = alt4Node[thisTri + 1];
+					const float3 I = O + d * D;
+					const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
+					const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
+					const bool trihit = u >= 0 && v >= 0 && u + v < 1;
+					if (trihit) hit = (float4)(d, u, v, as_uint( alt4Node[thisTri + 3].w ) );
+				}
+			}
+		}
+		if (dst4.y < 1e30f) if (data3.y >> 31)
+		{
+			const unsigned triCount = (data3.y >> 16) & 0x7fff;
+			for( int i = 0; i < triCount; i++ )
+			{
+				const unsigned thisTri = (data3.y & 0xffff) + offset + i * 4;
+				const float4 T2 = alt4Node[thisTri + 2];
+				const float transS = T2.x * O.x + T2.y * O.y + T2.z * O.z + T2.w;
+				const float transD = T2.x * D.x + T2.y * D.y + T2.z * D.z, d = -transS / transD;
+				if (d <= 0 || d >= hit.x) continue;
+				const float4 T0 = alt4Node[thisTri + 0], T1 = alt4Node[thisTri + 1];
+				const float3 I = O + d * D;
+				const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
+				const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
+				const bool trihit = u >= 0 && v >= 0 && u + v < 1;
+				if (trihit) hit = (float4)(d, u, v, as_uint( alt4Node[thisTri + 3].w ) );
+			}
+		}
+		else
+		{
+			if (nextNode) stack[stackPtr++] = nextNode;
+			nextNode = data3.y;
+		}
+		if (dst4.z < 1e30f) if (data3.z >> 31) 
+		{
+			const unsigned triCount = (data3.z >> 16) & 0x7fff;
+			for( int i = 0; i < triCount; i++ )
+			{
+				const unsigned thisTri = (data3.z & 0xffff) + offset + i * 4;
+				const float4 T2 = alt4Node[thisTri + 2];
+				const float transS = T2.x * O.x + T2.y * O.y + T2.z * O.z + T2.w;
+				const float transD = T2.x * D.x + T2.y * D.y + T2.z * D.z, d = -transS / transD;
+				if (d <= 0 || d >= hit.x) continue;
+				const float4 T0 = alt4Node[thisTri + 0], T1 = alt4Node[thisTri + 1];
+				const float3 I = O + d * D;
+				const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
+				const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
+				const bool trihit = u >= 0 && v >= 0 && u + v < 1;
+				if (trihit) hit = (float4)(d, u, v, as_uint( alt4Node[thisTri + 3].w ) );
+			}
+		}
+		else
+		{
+			if (nextNode) stack[stackPtr++] = nextNode;
+			nextNode = data3.z;
+		}
+		if (dst4.w < 1e30f) if (data3.w >> 31) 
+		{
+			const unsigned triCount = (data3.w >> 16) & 0x7fff;
+			for( int i = 0; i < triCount; i++ )
+			{
+				const unsigned thisTri = (data3.w & 0xffff) + offset + i * 4;
+				const float4 T2 = alt4Node[thisTri + 2];
+				const float transS = T2.x * O.x + T2.y * O.y + T2.z * O.z + T2.w;
+				const float transD = T2.x * D.x + T2.y * D.y + T2.z * D.z, d = -transS / transD;
+				if (d <= 0 || d >= hit.x) continue;
+				const float4 T0 = alt4Node[thisTri + 0], T1 = alt4Node[thisTri + 1];
+				const float3 I = O + d * D;
+				const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
+				const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
+				const bool trihit = u >= 0 && v >= 0 && u + v < 1;
+				if (trihit) hit = (float4)(d, u, v, as_uint( alt4Node[thisTri + 3].w ) );
+			}
+		}
+		else
+		{
+			if (nextNode) stack[stackPtr++] = nextNode;
+			nextNode = data3.w;
+		}
+	#else
 		unsigned nextNode = 0, leafs = 0;
 		if (dst4.x < 1e30f) if (data3.x >> 31) smem[smBase + leafs++] = data3.x; else nextNode = data3.x;
 		if (dst4.y < 1e30f) if (data3.y >> 31) smem[smBase + leafs++] = data3.y; else
@@ -286,6 +379,7 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 			hit = (float4)(d, u, v, v0.w);
 		#endif
 		}
+	#endif
 		// continue with nearest node or first node on the stack
 		if (nextNode) offset = nextNode; else
 		{
