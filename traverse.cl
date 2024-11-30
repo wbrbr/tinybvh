@@ -1,7 +1,7 @@
 // gpu-side code for ray traversal
 
 // #define CWBVH_COMPRESSED_TRIS // sync with tiny_bvh.h
-#define BVH4_GPU_COMPRESSED_TRIS // sync with tiny_bvh.h
+// #define BVH4_GPU_COMPRESSED_TRIS // sync with tiny_bvh.h
 
 struct Ray
 {
@@ -175,7 +175,43 @@ void kernel traverse_ailalaine( global struct BVHNodeAlt* altNode, global unsign
 // 
 // ============================================================================
 
-void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayData )
+#ifdef BVH4_GPU_COMPRESSED_TRIS
+#define STRIDE 4
+#else
+#define STRIDE 3
+#endif
+void IntersectTri( const unsigned vertIdx, const float3* O, const float3* D, float4* hit, const global float4* alt4Node ) 
+{
+#ifdef BVH4_GPU_COMPRESSED_TRIS
+	const float4 T2 = alt4Node[vertIdx + 2];
+	const float transS = T2.x * O->x + T2.y * O->y + T2.z * O->z + T2.w;
+	const float transD = T2.x * D->x + T2.y * D->y + T2.z * D->z, d = -transS / transD;
+	if (d <= 0 || d >= hit->x) return;
+	const float4 T0 = alt4Node[vertIdx + 0], T1 = alt4Node[vertIdx + 1];
+	const float3 I = *O + d * *D;
+	const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
+	const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
+	const bool trihit = u >= 0 && v >= 0 && u + v < 1;
+	if (trihit) *hit = (float4)(d, u, v, as_uint( alt4Node[vertIdx + 3].w ) );
+#else
+	const float4 edge2 = alt4Node[vertIdx + 2];
+	const float4 edge1 = alt4Node[vertIdx + 1];
+	const float4 v0 = alt4Node[vertIdx];
+	const float3 h = cross( *D, edge2.xyz );
+	const float a = dot( edge1.xyz, h );
+	if (fabs( a ) < 0.0000001f) return;
+	const float f = native_recip( a );
+	const float3 s = *O - v0.xyz;
+	const float u = f * dot( s, h );
+	if (u < 0 || u > 1) return;
+	const float3 q = cross( s, edge1.xyz );
+	const float v = f * dot( *D, q );
+	if (v < 0 || u + v > 1) return;
+	const float d = f * dot( edge2.xyz, q );
+	if (d > 0.0f && d < hit->x) *hit = (float4)(d, u, v, v0.w);
+#endif
+}
+void kernel traverse_gpu4way( const global float4* alt4Node, global struct Ray* rayData )
 {
 	// fetch ray
 	const unsigned threadId = get_global_id( 0 );
@@ -184,8 +220,6 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 	const float3 rD = rayData[threadId].rD.xyz;
 	float4 hit;
 	hit.x = 1e30f;
-	// some local memory for storing leaf information
-	local unsigned smem[64 * 4];
 	// traverse the BVH
 	const float4 zero4 = (float4)(0);
 	unsigned offset = 0, stack[64], stackPtr = 0;
@@ -224,46 +258,16 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 		if (dst4.z < dst4.w) dst4 = dst4.xywz, data3 = data3.xywz;
 		if (dst4.y < dst4.z) dst4 = dst4.xzyw, data3 = data3.xzyw;
 		// process results, starting with farthest child, so nearest ends on top of stack
-	#if 1
 		unsigned nextNode = 0;
-		if (dst4.x < 1e30f) 
+		if (dst4.x < 1e30f) if ((data3.x >> 31) == 0) nextNode = data3.x; else
 		{
-			if ((data3.x >> 31) == 0) nextNode = data3.x; else
-			{
-				const unsigned triCount = (data3.x >> 16) & 0x7fff;
-				for( int i = 0; i < triCount; i++ )
-				{
-					const unsigned thisTri = (data3.x & 0xffff) + offset + i * 4;
-					const float4 T2 = alt4Node[thisTri + 2];
-					const float transS = T2.x * O.x + T2.y * O.y + T2.z * O.z + T2.w;
-					const float transD = T2.x * D.x + T2.y * D.y + T2.z * D.z, d = -transS / transD;
-					if (d <= 0 || d >= hit.x) continue;
-					const float4 T0 = alt4Node[thisTri + 0], T1 = alt4Node[thisTri + 1];
-					const float3 I = O + d * D;
-					const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
-					const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
-					const bool trihit = u >= 0 && v >= 0 && u + v < 1;
-					if (trihit) hit = (float4)(d, u, v, as_uint( alt4Node[thisTri + 3].w ) );
-				}
-			}
+			const unsigned triCount = (data3.x >> 16) & 0x7fff;
+			for( int i = 0; i < triCount; i++ ) IntersectTri( (data3.x & 0xffff) + offset + i * STRIDE, &O, &D, &hit, alt4Node );
 		}
 		if (dst4.y < 1e30f) if (data3.y >> 31)
 		{
 			const unsigned triCount = (data3.y >> 16) & 0x7fff;
-			for( int i = 0; i < triCount; i++ )
-			{
-				const unsigned thisTri = (data3.y & 0xffff) + offset + i * 4;
-				const float4 T2 = alt4Node[thisTri + 2];
-				const float transS = T2.x * O.x + T2.y * O.y + T2.z * O.z + T2.w;
-				const float transD = T2.x * D.x + T2.y * D.y + T2.z * D.z, d = -transS / transD;
-				if (d <= 0 || d >= hit.x) continue;
-				const float4 T0 = alt4Node[thisTri + 0], T1 = alt4Node[thisTri + 1];
-				const float3 I = O + d * D;
-				const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
-				const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
-				const bool trihit = u >= 0 && v >= 0 && u + v < 1;
-				if (trihit) hit = (float4)(d, u, v, as_uint( alt4Node[thisTri + 3].w ) );
-			}
+			for( int i = 0; i < triCount; i++ ) IntersectTri( (data3.y & 0xffff) + offset + i * STRIDE, &O, &D, &hit, alt4Node );
 		}
 		else
 		{
@@ -273,20 +277,7 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 		if (dst4.z < 1e30f) if (data3.z >> 31) 
 		{
 			const unsigned triCount = (data3.z >> 16) & 0x7fff;
-			for( int i = 0; i < triCount; i++ )
-			{
-				const unsigned thisTri = (data3.z & 0xffff) + offset + i * 4;
-				const float4 T2 = alt4Node[thisTri + 2];
-				const float transS = T2.x * O.x + T2.y * O.y + T2.z * O.z + T2.w;
-				const float transD = T2.x * D.x + T2.y * D.y + T2.z * D.z, d = -transS / transD;
-				if (d <= 0 || d >= hit.x) continue;
-				const float4 T0 = alt4Node[thisTri + 0], T1 = alt4Node[thisTri + 1];
-				const float3 I = O + d * D;
-				const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
-				const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
-				const bool trihit = u >= 0 && v >= 0 && u + v < 1;
-				if (trihit) hit = (float4)(d, u, v, as_uint( alt4Node[thisTri + 3].w ) );
-			}
+			for( int i = 0; i < triCount; i++ ) IntersectTri( (data3.z & 0xffff) + offset + i * STRIDE, &O, &D, &hit, alt4Node );
 		}
 		else
 		{
@@ -296,90 +287,13 @@ void kernel traverse_gpu4way( global float4* alt4Node, global struct Ray* rayDat
 		if (dst4.w < 1e30f) if (data3.w >> 31) 
 		{
 			const unsigned triCount = (data3.w >> 16) & 0x7fff;
-			for( int i = 0; i < triCount; i++ )
-			{
-				const unsigned thisTri = (data3.w & 0xffff) + offset + i * 4;
-				const float4 T2 = alt4Node[thisTri + 2];
-				const float transS = T2.x * O.x + T2.y * O.y + T2.z * O.z + T2.w;
-				const float transD = T2.x * D.x + T2.y * D.y + T2.z * D.z, d = -transS / transD;
-				if (d <= 0 || d >= hit.x) continue;
-				const float4 T0 = alt4Node[thisTri + 0], T1 = alt4Node[thisTri + 1];
-				const float3 I = O + d * D;
-				const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
-				const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
-				const bool trihit = u >= 0 && v >= 0 && u + v < 1;
-				if (trihit) hit = (float4)(d, u, v, as_uint( alt4Node[thisTri + 3].w ) );
-			}
+			for( int i = 0; i < triCount; i++ ) IntersectTri( (data3.w & 0xffff) + offset + i * STRIDE, &O, &D, &hit, alt4Node );
 		}
 		else
 		{
 			if (nextNode) stack[stackPtr++] = nextNode;
 			nextNode = data3.w;
 		}
-	#else
-		unsigned nextNode = 0, leafs = 0;
-		if (dst4.x < 1e30f) if (data3.x >> 31) smem[smBase + leafs++] = data3.x; else nextNode = data3.x;
-		if (dst4.y < 1e30f) if (data3.y >> 31) smem[smBase + leafs++] = data3.y; else
-		{
-			if (nextNode) stack[stackPtr++] = nextNode;
-			nextNode = data3.y;
-		}
-		if (dst4.z < 1e30f) if (data3.z >> 31) smem[smBase + leafs++] = data3.z; else
-		{
-			if (nextNode) stack[stackPtr++] = nextNode;
-			nextNode = data3.z;
-		}
-		if (dst4.w < 1e30f) if (data3.w >> 31) smem[smBase + leafs++] = data3.w; else
-		{
-			if (nextNode) stack[stackPtr++] = nextNode;
-			nextNode = data3.w;
-		}
-		// process encountered leaf primitives
-		int leaf = 0, prim = 0;
-		while (leaf < leafs)
-		{
-			const unsigned leafInfo = smem[smBase + leaf];
-		#ifdef BVH4_GPU_COMPRESSED_TRIS
-			const unsigned thisTri = (leafInfo & 0xffff) + offset + prim * 4;
-			const float4 T2 = alt4Node[thisTri + 2];
-			const float transS = T2.x * O.x + T2.y * O.y + T2.z * O.z + T2.w;
-			const float transD = T2.x * D.x + T2.y * D.y + T2.z * D.z;
-			const float d = -transS / transD;
-			const unsigned triCount = (leafInfo >> 16) & 0x7fff;
-			if (++prim == triCount) prim = 0, leaf++;
-			if (d > 0 && d < hit.x)
-			{
-				const float4 T0 = alt4Node[thisTri + 0];
-				const float4 T1 = alt4Node[thisTri + 1];
-				const float3 I = O + d * D;
-				const float u = T0.x * I.x + T0.y * I.y + T0.z * I.z + T0.w;
-				const float v = T1.x * I.x + T1.y * I.y + T1.z * I.z + T1.w;
-				const bool trihit = u >= 0 && v >= 0 && u + v < 1;
-				if (trihit) hit = (float4)(d, u, v, as_uint( alt4Node[thisTri + 3].w ) );
-			}
-		#else
-			const unsigned thisTri = (leafInfo & 0xffff) + offset + prim * 3;
-			const float4 edge2 = alt4Node[thisTri + 2];
-			const float4 edge1 = alt4Node[thisTri + 1];
-			const float4 v0 = alt4Node[thisTri];
-			const unsigned triCount = (leafInfo >> 16) & 0x7fff;
-			if (++prim == triCount) prim = 0, leaf++;
-			const float3 h = cross( D, edge2.xyz );
-			const float a = dot( edge1.xyz, h );
-			if (fabs( a ) < 0.0000001f) continue;
-			const float f = native_recip( a );
-			const float3 s = O - v0.xyz;
-			const float u = f * dot( s, h );
-			if (u < 0 || u > 1) continue;
-			const float3 q = cross( s, edge1.xyz );
-			const float v = f * dot( D, q );
-			if (v < 0 || u + v > 1) continue;
-			const float d = f * dot( edge2.xyz, q );
-			if (d <= 0.0f || d > hit.x) continue;
-			hit = (float4)(d, u, v, v0.w);
-		#endif
-		}
-	#endif
 		// continue with nearest node or first node on the stack
 		if (nextNode) offset = nextNode; else
 		{

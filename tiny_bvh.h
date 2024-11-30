@@ -86,7 +86,7 @@ THE SOFTWARE.
 // CWBVH triangle format: doesn't seem to help on GPU?
 // #define CWBVH_COMPRESSED_TRIS
 // BVH4 triangle format
-#define BVH4_GPU_COMPRESSED_TRIS
+// #define BVH4_GPU_COMPRESSED_TRIS
 
 // include fast AVX BVH builder
 #if defined(__x86_64__) || defined(_M_X64) || defined(__wasm_simd128__) || defined(__wasm_relaxed_simd__)
