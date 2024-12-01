@@ -1,8 +1,7 @@
 #ifndef FENSTER_H
 #define FENSTER_H
 
-#define SCRWIDTH 800
-#define SCRHEIGHT 600
+
 
 #if defined(__APPLE__)
 #include <CoreGraphics/CoreGraphics.h>
@@ -20,7 +19,6 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <chrono>
 
 struct fenster {
   const char *title;
@@ -44,18 +42,7 @@ struct fenster {
 #endif
 };
 
-struct Timer
-{
-	Timer() { reset(); }
-	float elapsed() const
-	{
-		std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-		std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - start);
-		return (float)time_span.count();
-	}
-	void reset() { start = std::chrono::high_resolution_clock::now(); }
-	std::chrono::high_resolution_clock::time_point start;
-};
+
 
 #ifndef FENSTER_API
 #define FENSTER_API extern
@@ -385,35 +372,5 @@ public:
 #endif /* __cplusplus */
 
 #endif /* !FENSTER_HEADER */
-
-void Init();
-void Tick( uint32_t* buf );
-void Shutdown();
-int run() 
-{
-	uint32_t* buf = new uint32_t[SCRWIDTH * SCRHEIGHT];
-	struct fenster f = { .title = "tiny_bvh", .width = SCRWIDTH, .height = SCRHEIGHT, .buf = buf, };
-	fenster_open( &f );
-	Init();
-	while (fenster_loop( &f ) == 0) 
-	{
-		Tick( buf );
-		if (f.keys[27]) break;
-	}
-	Shutdown();
-	fenster_close( &f );
-	delete [] buf;
-	return 0;
-}
-
-#if defined(_WIN32)
-int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
-	int nCmdShow ) {
-	(void)hInstance, (void)hPrevInstance, (void)pCmdLine, (void)nCmdShow;
-	return run();
-}
-#else
-int main() { return run(); }
-#endif
 
 #endif /* FENSTER_H */

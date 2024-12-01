@@ -1,4 +1,28 @@
 #include "external/fenster.h" // https://github.com/zserge/fenster
+#include <chrono>
+
+#define SCRWIDTH 800
+#define SCRHEIGHT 600
+
+
+struct Timer
+{
+	Timer() { reset(); }
+	float elapsed() const
+	{
+		std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+		std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - start);
+		return (float)time_span.count();
+	}
+	void reset() { start = std::chrono::high_resolution_clock::now(); }
+	std::chrono::high_resolution_clock::time_point start;
+};
+
+
+void Init();
+void Tick(float delta_time_s, fenster& f, uint32_t* buf);
+void Shutdown();
+
 
 // #define USE_EMBREE // enable to verify correct implementation, win64 only for now.
 #define LOADSCENE
@@ -128,30 +152,33 @@ void Init()
 	t.close();
 }
 
-void UpdateCamera()
+
+void UpdateCamera(float delta_time_s, fenster& f)
 {
 	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
 	bvhvec3 up = 0.8f * cross( view, right );
-#ifdef _WIN32
-	// on windows, we get camera controls.
-	if (GetAsyncKeyState( 'A' )) eye += right * -1.0f;
-	if (GetAsyncKeyState( 'D' )) eye += right;
-	if (GetAsyncKeyState( 'W' )) eye += view;
-	if (GetAsyncKeyState( 'S' )) eye += view * -1.0f;
-	if (GetAsyncKeyState( 'R' )) eye += up;
-	if (GetAsyncKeyState( 'F' )) eye += up * -1.0f;
+	int64_t new_fenster_time = fenster_time();
+
+	// get camera controls.
+
+	if (f.keys['A']) eye += right * -1.0f * delta_time_s * 10;
+	if (f.keys['D']) eye += right * delta_time_s * 10;
+	if (f.keys['W']) eye += view * delta_time_s * 10;
+	if (f.keys['S']) eye += view * -1.0f * delta_time_s * 10;
+	if (f.keys['R']) eye += up * delta_time_s * 10;
+	if (f.keys['F']) eye += up * -1.0f * delta_time_s * 10;
+
 	// recalculate right, up
 	right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
 	up = 0.8f * cross( view, right );
-#endif
 	bvhvec3 C = eye + 2 * view;
 	p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
 }
 
-void Tick( uint32_t* buf )
+void Tick(float delta_time_s, fenster & f, uint32_t* buf)
 {
-	// handle user input (windows only) and update camera
-	UpdateCamera();
+	// handle user input and update camera
+	UpdateCamera(delta_time_s, f);
 
 	// clear the screen with a debug-friendly color
 	for (int i = 0; i < SCRWIDTH * SCRHEIGHT; i++) buf[i] = 0xff00ff;
@@ -160,6 +187,7 @@ void Tick( uint32_t* buf )
 	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
 	int N = 0;
 	Ray* rays = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
+	int * depths = (int *)tinybvh::malloc64(SCRWIDTH * SCRHEIGHT * sizeof (int));
 	for (int ty = 0; ty < SCRHEIGHT; ty += 4) for (int tx = 0; tx < SCRWIDTH; tx += 4 )
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
@@ -172,7 +200,7 @@ void Tick( uint32_t* buf )
 
 	// trace primary rays
 #if !defined USE_EMBREE
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::BVH4_AFRA );
+	for (int i = 0; i < N; i++) depths[i] = bvh.Intersect( rays[i], BVH::BVH4_AFRA );
 #else
 	struct RTCRayHit rayhit;
 	for (int i = 0; i < N; i++)
@@ -200,6 +228,8 @@ void Tick( uint32_t* buf )
 			bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
 			int c = (int)(255.9f * fabs( dot( N, L ) ));
 			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
+			//buf[pixel_x + pixel_y * SCRWIDTH] = (primIdx * 0xdeece66d + 0xb) & 0xFFFFFF;
+			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + depths[i] << 18;//
 		}
 	}
 	tinybvh::free64( rays );
@@ -214,3 +244,36 @@ void Shutdown()
 	s.write( (char*)&view, sizeof( view ) );
 	s.close();
 }
+
+
+
+int run()
+{
+	uint32_t* buf = new uint32_t[SCRWIDTH * SCRHEIGHT];
+	struct fenster f = { .title = "tiny_bvh", .width = SCRWIDTH, .height = SCRHEIGHT, .buf = buf, };
+	
+	fenster_open(&f);
+	Timer t;
+	Init();
+	t.reset();
+	while (fenster_loop(&f) == 0) {
+		float elapsed = t.elapsed();
+		t.reset();
+		Tick(elapsed, f, buf);
+		if (f.keys[27]) break;
+	}
+	Shutdown();
+	fenster_close(&f);
+	delete[] buf;
+	return 0;
+}
+
+#if defined(_WIN32)
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
+	int nCmdShow) {
+	(void)hInstance, (void)hPrevInstance, (void)pCmdLine, (void)nCmdShow;
+	return run();
+}
+#else
+int main() { return run(); }
+#endif
