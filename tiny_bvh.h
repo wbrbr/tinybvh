@@ -3756,6 +3756,7 @@ int BVH::Intersect_Afra( Ray& ray ) const
 	const __m128 inf4 = _mm_set1_ps( 1e30f );
 	while (1)
 	{
+		steps++;
 		const BVHNode4Alt2& node = bvh4Alt2[nodeIdx];
 		// intersect the ray with four AABBs
 		const __m128 xmin4 = node.xmin4, xmax4 = node.xmax4;
