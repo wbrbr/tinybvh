@@ -1,28 +1,7 @@
-#include "external/fenster.h" // https://github.com/zserge/fenster
-#include <chrono>
-
+#define FENSTER_APP_IMPLEMENTATION
 #define SCRWIDTH 800
 #define SCRHEIGHT 600
-
-
-struct Timer
-{
-	Timer() { reset(); }
-	float elapsed() const
-	{
-		std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-		std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - start);
-		return (float)time_span.count();
-	}
-	void reset() { start = std::chrono::high_resolution_clock::now(); }
-	std::chrono::high_resolution_clock::time_point start;
-};
-
-
-void Init();
-void Tick(float delta_time_s, fenster& f, uint32_t* buf);
-void Shutdown();
-
+#include "external/fenster.h" // https://github.com/zserge/fenster
 
 // #define USE_EMBREE // enable to verify correct implementation, win64 only for now.
 #define LOADSCENE
@@ -244,36 +223,3 @@ void Shutdown()
 	s.write( (char*)&view, sizeof( view ) );
 	s.close();
 }
-
-
-
-int run()
-{
-	uint32_t* buf = new uint32_t[SCRWIDTH * SCRHEIGHT];
-	struct fenster f = { .title = "tiny_bvh", .width = SCRWIDTH, .height = SCRHEIGHT, .buf = buf, };
-	
-	fenster_open(&f);
-	Timer t;
-	Init();
-	t.reset();
-	while (fenster_loop(&f) == 0) {
-		float elapsed = t.elapsed();
-		t.reset();
-		Tick(elapsed, f, buf);
-		if (f.keys[27]) break;
-	}
-	Shutdown();
-	fenster_close(&f);
-	delete[] buf;
-	return 0;
-}
-
-#if defined(_WIN32)
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
-	int nCmdShow) {
-	(void)hInstance, (void)hPrevInstance, (void)pCmdLine, (void)nCmdShow;
-	return run();
-}
-#else
-int main() { return run(); }
-#endif
