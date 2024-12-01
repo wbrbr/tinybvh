@@ -228,8 +228,8 @@ void Tick(float delta_time_s, fenster & f, uint32_t* buf)
 			bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
 			int c = (int)(255.9f * fabs( dot( N, L ) ));
 			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
-			//buf[pixel_x + pixel_y * SCRWIDTH] = (primIdx * 0xdeece66d + 0xb) & 0xFFFFFF;
-			//buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + depths[i] << 18;//
+			// buf[pixel_x + pixel_y * SCRWIDTH] = (primIdx * 0xdeece66d + 0xb) & 0xFFFFFF; // color is hashed primitive index
+			// buf[pixel_x + pixel_y * SCRWIDTH] = depths[i] << 18; // render depth as red
 		}
 	}
 	tinybvh::free64( rays );
