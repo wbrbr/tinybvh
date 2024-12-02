@@ -203,6 +203,18 @@ void ValidateTraceResult( Ray* batch, float* ref, unsigned N, unsigned line )
 	}
 }
 
+void ValidateTraceResultEx( RayEx* batch, float* ref, unsigned N, unsigned line )
+{
+	float refSum = 0;
+	double batchSum = 0;
+	for (unsigned i = 0; i < N; i += 4)
+		refSum += ref[i] == 1e30f ? 100 : ref[i],
+		batchSum += batch[i].t == 1e300 ? 100 : batch[i].t;
+	if (fabs( refSum - (float)batchSum ) / refSum < 0.0001f) return;
+	fprintf( stderr, "Validation failed on line %i.\n", line );
+	exit( 1 );
+}
+
 int main()
 {
 	int minor = TINY_BVH_VERSION_MINOR;
@@ -512,6 +524,7 @@ int main()
 	// double-precision Rays/BVH
 	printf( "- WALD_DOUBLE - primary: " );
 	traceTime = TestPrimaryRaysEx( BVH::WALD_DOUBLE, doubleBatch, Nsmall, 3 );
+	ValidateTraceResultEx( doubleBatch, refDist, Nsmall, __LINE__ );
 	printf( "%4.2fM rays in %5.1fms (%7.2fMRays/s)\n", (float)Nsmall * 1e-6f, traceTime * 1000, (float)Nsmall / traceTime * 1e-6f );
 
 #endif
@@ -809,10 +822,10 @@ int main()
 
 #endif
 
+#if defined EMBREE_TRAVERSE && defined EMBREE_BUILD
+
 	// report threaded CPU performance
 	printf( "BVH traversal speed - EMBREE reference\n" );
-
-#if defined EMBREE_TRAVERSE && defined EMBREE_BUILD
 
 	// trace all rays three times to estimate average performance
 	// - coherent, Embree, single-threaded

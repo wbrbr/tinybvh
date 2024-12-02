@@ -329,9 +329,14 @@ static inline bvhvec3 cross( const bvhvec3& a, const bvhvec3& b )
 {
 	return bvhvec3( a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x );
 }
+static inline bvhdbl3 cross( const bvhdbl3& a, const bvhdbl3& b )
+{
+	return bvhdbl3( a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x );
+}
 static inline float dot( const bvhvec2& a, const bvhvec2& b ) { return a.x * b.x + a.y * b.y; }
 static inline float dot( const bvhvec3& a, const bvhvec3& b ) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 static inline float dot( const bvhvec4& a, const bvhvec4& b ) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
+static inline double dot( const bvhdbl3& a, const bvhdbl3& b ) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 
 // Vector math: common operations.
 static float length( const bvhvec3& a ) { return sqrtf( a.x * a.x + a.y * a.y + a.z * a.z ); }
@@ -2548,7 +2553,29 @@ int BVH::IntersectEx_WaldDouble( RayEx& ray ) const
 		steps++;
 		if (node->isLeaf())
 		{
-			// for (unsigned i = 0; i < node->triCount; i++) IntersectTri( ray, triIdx[node->leftFirst + i] );
+			for (unsigned i = 0; i < node->triCount; i++) 
+			{
+				const unsigned long long int idx = triIdxEx[node->leftFirst + i];
+				const unsigned long long int vertIdx = idx * 3;
+				const bvhdbl3 edge1 = vertsEx[vertIdx + 1] - vertsEx[vertIdx];
+				const bvhdbl3 edge2 = vertsEx[vertIdx + 2] - vertsEx[vertIdx];
+				const bvhdbl3 h = cross( ray.D, edge2 );
+				const double a = dot( edge1, h );
+				if (fabs( a ) < 0.0000001) continue; // ray parallel to triangle
+				const double f = 1 / a;
+				const bvhdbl3 s = ray.O - bvhdbl3( vertsEx[vertIdx] );
+				const double u = f * dot( s, h );
+				if (u < 0 || u > 1) continue;
+				const bvhdbl3 q = cross( s, edge1 );
+				const double v = f * dot( ray.D, q );
+				if (v < 0 || u + v > 1) continue;
+				const double t = f * dot( edge2, q );
+				if (t > 0 && t < ray.t)
+				{
+					// register a hit: ray is shortened to t
+					ray.t = t, ray.u = u, ray.v = v, ray.primIdx = idx;
+				}
+			}
 			if (stackPtr == 0) break; else node = stack[--stackPtr];
 			continue;
 		}
