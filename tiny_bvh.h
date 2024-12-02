@@ -23,6 +23,7 @@ THE SOFTWARE.
 */
 
 // 2024
+// Dec 02: version 1.0.1 : Shadow ray validation, double precision.
 // Nov 28: version 1.0.0 : Validation in speedtest, faster tri test.
 // Nov 25: version 0.9.8 : FATAL_ERROR_IF interface.
 // Nov 22: version 0.9.7 : Bug fix release.

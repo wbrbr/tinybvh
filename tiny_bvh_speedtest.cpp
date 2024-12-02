@@ -235,17 +235,9 @@ int main()
 #ifdef LOADSPONZA
 	// load raw vertex data for Crytek's Sponza
 	const std::string scene = "cryteksponza.bin";
-	std::string filename{ "../testdata/" };
+	std::string filename{ "./testdata/" };
 	filename += scene;
 	std::fstream s{ filename, s.binary | s.in };
-	if (!s.is_open())
-	{
-		// try again, look in .\testdata
-		std::string filename{ "./testdata/" };
-		filename += scene;
-		s = std::fstream{ filename, s.binary | s.in };
-		assert( s.is_open() );
-	}
 	s.seekp( 0 );
 	s.read( (char*)&verts, 4 );
 	printf( "Loading triangle data (%i tris).\n", verts );
