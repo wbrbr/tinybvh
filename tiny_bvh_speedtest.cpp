@@ -13,7 +13,7 @@
 #define ENABLE_OPENCL
 
 // tests to perform
-// #define BUILD_MIDPOINT
+#define BUILD_MIDPOINT
 #define BUILD_REFERENCE
 #define BUILD_DOUBLE
 #define BUILD_AVX
@@ -135,6 +135,20 @@ float TestPrimaryRays( BVH::BVHLayout layout, Ray* batch, unsigned N, unsigned p
 	return t.elapsed() / passes;
 }
 
+float TestPrimaryRaysEx( BVH::BVHLayout layout, RayEx* batch, unsigned N, unsigned passes )
+{
+	// Primary rays: coherent batch of rays from a pinhole camera.
+	// Double-precision version.
+	Timer t;
+	unsigned steps = 0;
+	for (unsigned pass = 0; pass < passes + 1; pass++)
+	{
+		if (pass == 1) t.reset(); // first pass is cache warming
+		for (unsigned i = 0; i < N; i++) steps += bvh.IntersectEx( batch[i], layout );
+	}
+	return steps == 0 ? 0 : (t.elapsed() / passes);
+}
+
 float TestShadowRays( BVH::BVHLayout layout, Ray* batch, unsigned N, unsigned passes )
 {
 	// Shadow rays: coherent batch of rays from a single point to 'far away'. Shadow
@@ -247,7 +261,7 @@ int main()
 	s.seekp( 0 );
 	s.read( (char*)&verts, 4 );
 	printf( "Loading triangle data (%i tris).\n", verts );
-	verts *= 3, triangles = (bvhvec4*)tinybvh::malloc64( verts * 16 );
+	verts *= 3, triangles = (bvhvec4*)tinybvh::malloc64( verts * sizeof( bvhvec4 ) );
 	s.read( (char*)triangles, verts * 16 );
 #else
 	// generate a sphere flake scene
@@ -271,6 +285,7 @@ int main()
 	int Nfull = 0, Nsmall = 0;
 	Ray* fullBatch = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
 	Ray* smallBatch = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 2 * sizeof( Ray ) );
+	RayEx* doubleBatch = (RayEx*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 2 * sizeof( RayEx ) );
 	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
@@ -283,7 +298,13 @@ int main()
 				float v = (float)(pixel_y * 4 + (s >> 2)) / (SCRHEIGHT * 4);
 				bvhvec3 P = p1 + u * (p2 - p1) + v * (p3 - p1);
 				fullBatch[Nfull++] = Ray( eye, normalize( P - eye ) );
-				if ((s & 7) == 0) smallBatch[Nsmall++] = fullBatch[Nfull - 1];
+				if ((s & 7) == 0) 
+				{
+					smallBatch[Nsmall] = fullBatch[Nfull - 1];
+					tinybvh::bvhdbl3 O = smallBatch[Nsmall].O;
+					tinybvh::bvhdbl3 D = smallBatch[Nsmall].D;
+					doubleBatch[Nsmall++] = RayEx( O, D );
+				}
 			}
 		}
 	}
@@ -326,7 +347,7 @@ int main()
 	// measure single-core bvh construction time - double-precision builder
 	printf( "- 'double' builder:  " );
 	t.reset();
-	tinybvh::bvhdbl3* triEx = (tinybvh::bvhdbl3*)tinybvh::malloc64( verts * 3 * sizeof( tinybvh::bvhdbl3 ) );
+	tinybvh::bvhdbl3* triEx = (tinybvh::bvhdbl3*)tinybvh::malloc64( verts * sizeof( tinybvh::bvhdbl3 ) );
 	for( int i = 0; i < verts; i++ ) 
 		triEx[i].x = (double)triangles[i].x,
 		triEx[i].y = (double)triangles[i].y,
@@ -489,8 +510,9 @@ int main()
 #if defined TRAVERSE_2WAY_DBL && defined BUILD_DOUBLE
 
 	// double-precision Rays/BVH
-	// printf( "- WALD_DOUBLE - primary: " );
-	// traceTime = TestPrimaryRays( BVH::WALD_DOUBLE, smallBatch, Nsmall, 3 );
+	printf( "- WALD_DOUBLE - primary: " );
+	traceTime = TestPrimaryRaysEx( BVH::WALD_DOUBLE, doubleBatch, Nsmall, 3 );
+	printf( "%4.2fM rays in %5.1fms (%7.2fMRays/s)\n", (float)Nsmall * 1e-6f, traceTime * 1000, (float)Nsmall / traceTime * 1e-6f );
 
 #endif
 

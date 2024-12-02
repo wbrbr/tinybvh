@@ -215,6 +215,7 @@ struct bvhdbl3
 	bvhdbl3() = default;
 	bvhdbl3( const double a, const double b, const double c ) : x( a ), y( b ), z( c ) {}
 	bvhdbl3( const double a ) : x( a ), y( a ), z( a ) {}
+	bvhdbl3( const bvhvec3 a ) : x( (double)a.x ), y( (double)a.y ), z( (double)a.z ) {}
 	double halfArea() { return x < -BVH_FAR ? 0 : (x * y + y * z + z * x); } // for SAH calculations
 	double& operator [] ( const int i ) { return cell[i]; }
 	union { struct { double x, y, z; }; double cell[3]; };
@@ -606,16 +607,16 @@ public:
 		// Determine the SAH cost of the tree. This provides an indication
 		// of the quality of the BVH: Lower is better.
 		const BVHNode& n = bvhNode[nodeIdx];
-		if (n.isLeaf()) return 2.0f * n.SurfaceArea() * n.triCount;
-		float cost = 3.0f * n.SurfaceArea() + SAHCost( n.leftFirst ) + SAHCost( n.leftFirst + 1 );
+		if (n.isLeaf()) return C_INT * n.SurfaceArea() * n.triCount;
+		float cost = C_TRAV * n.SurfaceArea() + SAHCost( n.leftFirst ) + SAHCost( n.leftFirst + 1 );
 		return nodeIdx == 0 ? (cost / n.SurfaceArea()) : cost;
 	}
-	double SAHCostEx( const unsigned nodeIdx = 0 ) const
+	double SAHCostEx( const unsigned long long int nodeIdx = 0 ) const
 	{
 		// Determine the SAH cost of a double-precision tree.
 		const BVHNodeEx& n = bvhNodeEx[nodeIdx];
-		if (n.isLeaf()) return 2.0f * n.SurfaceArea() * n.triCount;
-		double cost = 3.0f * n.SurfaceArea() + SAHCostEx( n.leftFirst ) + SAHCostEx( n.leftFirst + 1 );
+		if (n.isLeaf()) return C_INT * n.SurfaceArea() * n.triCount;
+		double cost = C_TRAV * n.SurfaceArea() + SAHCostEx( n.leftFirst ) + SAHCostEx( n.leftFirst + 1 );
 		return nodeIdx == 0 ? (cost / n.SurfaceArea()) : cost;
 	}
 	int NodeCount( const BVHLayout layout ) const;
@@ -644,6 +645,7 @@ public:
 	void Optimize( const unsigned iterations ); // operates on VERBOSE
 	void Refit( const BVHLayout layout = WALD_32BYTE, const unsigned nodeIdx = 0 );
 	int Intersect( Ray& ray, const BVHLayout layout = WALD_32BYTE ) const;
+	int IntersectEx( RayEx& ray, const BVHLayout layout = WALD_DOUBLE ) const;
 	// IntersectTLAS: Interface is under construction. Current plan:
 	// * application constructs one or more BVHs (BLAS) using a layout of choice;
 	// * application instantiates one or more BVHInstances using the blasses;
@@ -666,11 +668,12 @@ private:
 	int Intersect_Wald32Byte( Ray& ray ) const;
 	int Intersect_AilaLaine( Ray& ray ) const;
 	int Intersect_Afra( Ray& ray ) const;
-	int Intersect_AltSoA( Ray& ray ) const; // requires BVH_USEAVX or BVH_USENEON
+	int Intersect_AltSoA( Ray& ray ) const; // requires BVH_USEAVX or BVH_USENEON.
 	int Intersect_BasicBVH4( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_BasicBVH8( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_Alt4BVH( Ray& ray ) const; // only for testing, not efficient.
 	int Intersect_CWBVH( Ray& ray ) const; // only for testing, not efficient.
+	int IntersectEx_WaldDouble( RayEx& ray ) const;
 	bool IsOccluded_Wald32Byte( const Ray& ray ) const;
 	bool IsOccluded_AilaLaine( const Ray& ray ) const;
 	bool IsOccluded_AltSoA( const Ray& ray ) const;
@@ -2446,6 +2449,20 @@ int BVH::Intersect( Ray& ray, const BVHLayout layout ) const
 	return 0;
 }
 
+int BVH::IntersectEx( RayEx& ray, const BVHLayout layout ) const
+{
+	switch (layout)
+	{
+	case BVH::WALD_DOUBLE:
+		return IntersectEx_WaldDouble( ray );
+		break;
+	default:
+		FATAL_ERROR_IF( true, "BVH::IntersectEx( .. , ? ), unsupported double-precision bvh layout." );
+		break;
+	}
+	return 0;		
+}
+
 void BVH::BatchIntersect( Ray* rayBatch, const unsigned N, const BVHLayout layout, const TraceDevice /* device */ ) const
 {
 	for (unsigned i = 0; i < N; i++) Intersect( rayBatch[i], layout );
@@ -2516,6 +2533,37 @@ int BVH::Intersect_Wald32Byte( Ray& ray ) const
 		{
 			node = child1; /* continue with the nearest */
 			if (dist2 != BVH_FAR) stack[stackPtr++] = child2; /* push far child */
+		}
+	}
+	return steps;
+}
+
+// Traverse the default BVH layout, double-precision.
+int BVH::IntersectEx_WaldDouble( RayEx& ray ) const
+{
+	BVHNodeEx* node = &bvhNodeEx[0], * stack[64];
+	unsigned stackPtr = 0, steps = 0;
+	while (1)
+	{
+		steps++;
+		if (node->isLeaf())
+		{
+			// for (unsigned i = 0; i < node->triCount; i++) IntersectTri( ray, triIdx[node->leftFirst + i] );
+			if (stackPtr == 0) break; else node = stack[--stackPtr];
+			continue;
+		}
+		BVHNodeEx* child1 = &bvhNodeEx[node->leftFirst];
+		BVHNodeEx* child2 = &bvhNodeEx[node->leftFirst + 1];
+		double dist1 = child1->Intersect( ray ), dist2 = child2->Intersect( ray );
+		if (dist1 > dist2) { tinybvh_swap( dist1, dist2 ); tinybvh_swap( child1, child2 ); }
+		if (dist1 == BVH_DBL_FAR /* missed both child nodes */)
+		{
+			if (stackPtr == 0) break; else node = stack[--stackPtr];
+		}
+		else /* hit at least one node */
+		{
+			node = child1; /* continue with the nearest */
+			if (dist2 != BVH_DBL_FAR) stack[stackPtr++] = child2; /* push far child */
 		}
 	}
 	return steps;
