@@ -15,6 +15,7 @@
 // tests to perform
 // #define BUILD_MIDPOINT
 #define BUILD_REFERENCE
+#define BUILD_DOUBLE
 #define BUILD_AVX
 // #define BUILD_NEON
 // #define BUILD_SBVH
@@ -22,6 +23,7 @@
 #define TRAVERSE_ALT2WAY_ST
 #define TRAVERSE_SOA2WAY_ST
 #define TRAVERSE_4WAY
+#define TRAVERSE_2WAY_DBL
 // #define TRAVERSE_CWBVH
 // #define TRAVERSE_BVH4
 // #define TRAVERSE_BVH8
@@ -319,6 +321,23 @@ int main()
 
 #endif
 
+#ifdef BUILD_DOUBLE
+
+	// measure single-core bvh construction time - double-precision builder
+	printf( "- double-precision builder: " );
+	t.reset();
+	tinybvh::bvhdbl3* triEx = (tinybvh::bvhdbl3*)tinybvh::malloc64( verts * 3 * sizeof( tinybvh::bvhdbl3 ) );
+	for( int i = 0; i < verts; i++ ) 
+		triEx[i].x = (double)triangles[i].x,
+		triEx[i].y = (double)triangles[i].y,
+		triEx[i].z = (double)triangles[i].z;
+	bvh.BuildEx( triEx, verts / 3 );
+	buildTime = t.elapsed();
+	printf( "%7.2fms for %7i triangles ", buildTime * 1000.0f, verts / 3 );
+	printf( "- %6i nodes\n", bvh.usedBVHExNodes );
+
+#endif
+
 #ifdef BUILD_AVX
 #ifdef BVH_USEAVX
 
@@ -464,6 +483,14 @@ int main()
 	printf( "%4.2fM rays in %5.1fms (%7.2fMRays/s), ", (float)Nsmall * 1e-6f, traceTime * 1000, (float)Nsmall / traceTime * 1e-6f );
 	traceTime = TestShadowRays( BVH::BVH4_AFRA, shadowBatch, Nsmall, 3 );
 	printf( "shadow: %5.1fms (%7.2fMRays/s)\n", traceTime * 1000, (float)Nsmall / traceTime * 1e-6f );
+
+#endif
+
+#if defined TRAVERSE_2WAY_DBL && defined BUILD_DOUBLE
+
+	// double-precision Rays/BVH
+	// printf( "- WALD_DOUBLE - primary: " );
+	// traceTime = TestPrimaryRays( BVH::WALD_DOUBLE, smallBatch, Nsmall, 3 );
 
 #endif
 

@@ -1048,7 +1048,7 @@ void BVH::BuildEx( const bvhdbl3* vertices, const unsigned primCount )
 {
 	// allocate on first build
 	const unsigned spaceNeeded = primCount * 2; // upper limit
-	if (allocatedBVHNodes < spaceNeeded)
+	if (allocatedBVHExNodes < spaceNeeded)
 	{
 		AlignedFree( bvhNodeEx );
 		AlignedFree( triIdxEx );
@@ -1075,7 +1075,7 @@ void BVH::BuildEx( const bvhdbl3* vertices, const unsigned primCount )
 			fragEx[i].bmin = tinybvh_min( tinybvh_min( vertsEx[i * 3], vertsEx[i * 3 + 1] ), vertsEx[i * 3 + 2] );
 			fragEx[i].bmax = tinybvh_max( tinybvh_max( vertsEx[i * 3], vertsEx[i * 3 + 1] ), vertsEx[i * 3 + 2] );
 			root.aabbMin = tinybvh_min( root.aabbMin, fragEx[i].bmin );
-			root.aabbMax = tinybvh_max( root.aabbMax, fragEx[i].bmax ), triIdx[i] = i;
+			root.aabbMax = tinybvh_max( root.aabbMax, fragEx[i].bmax ), triIdxEx[i] = i;
 		}
 	}
 	else
@@ -1151,10 +1151,10 @@ void BVH::BuildEx( const bvhdbl3* vertices, const unsigned primCount )
 			const double rpd = rpd3.cell[bestAxis], nmin = nmin3.cell[bestAxis];
 			for (unsigned long long int i = 0; i < node.triCount; i++)
 			{
-				const unsigned long long int fi = triIdx[src];
+				const unsigned long long int fi = triIdxEx[src];
 				int bi = (unsigned)(((fragEx[fi].bmin[bestAxis] + fragEx[fi].bmax[bestAxis]) * 0.5 - nmin) * rpd);
 				bi = tinybvh_clamp( bi, 0, BVHBINS - 1 );
-				if ((unsigned)bi <= bestPos) src++; else tinybvh_swap( triIdx[src], triIdx[--j] );
+				if ((unsigned)bi <= bestPos) src++; else tinybvh_swap( triIdxEx[src], triIdxEx[--j] );
 			}
 			// create child nodes
 			unsigned long long int leftCount = src - node.leftFirst, rightCount = node.triCount - leftCount;
