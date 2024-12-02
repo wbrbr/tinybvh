@@ -828,10 +828,10 @@ void BVH::BuildQuick( const bvhvec4* vertices, const unsigned primCount )
 		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
 		triIdx = (unsigned*)AlignedAlloc( primCount * sizeof( unsigned ) );
-		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
 		fragment = (Fragment*)AlignedAlloc( primCount * sizeof( Fragment ) );
 	}
 	else FATAL_ERROR_IF( !rebuildable, "BVH::BuildQuick( .. ), bvh not rebuildable." );
+	verts = (bvhvec4*)vertices; // note: we're not copying this data; don't delete.
 	idxCount = triCount = primCount;
 	// reset node pool
 	unsigned newNodePtr = 2;
@@ -914,11 +914,11 @@ void BVH::Build( const bvhvec4* vertices, const unsigned primCount )
 		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
 		triIdx = (unsigned*)AlignedAlloc( primCount * sizeof( unsigned ) );
-		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
 		if (verts) fragment = (Fragment*)AlignedAlloc( primCount * sizeof( Fragment ) );
 		else FATAL_ERROR_IF( fragment == 0, "BVH::Build( 0, .. ), not called from ::Build( aabb )." );
 	}
 	else FATAL_ERROR_IF( !rebuildable, "BVH::Build( .. ), bvh not rebuildable." );
+	verts = (bvhvec4*)vertices; // note: we're not copying this data; don't delete.
 	idxCount = triCount = primCount;
 	// reset node pool
 	unsigned newNodePtr = 2;
@@ -1051,10 +1051,10 @@ void BVH::BuildEx( const bvhdbl3* vertices, const unsigned primCount )
 		bvhNodeEx = (BVHNodeEx*)AlignedAlloc( spaceNeeded * sizeof( BVHNodeEx ) );
 		allocatedBVHExNodes = spaceNeeded;
 		triIdxEx = (unsigned long long int*)AlignedAlloc( primCount * sizeof( unsigned long long int ) );
-		vertsEx = (bvhdbl3*)vertices; // note: we're not copying this data; don't delete.
 		fragEx = (FragmentEx*)AlignedAlloc( primCount * sizeof( FragmentEx ) );
 	}
 	else FATAL_ERROR_IF( !rebuildable, "BVH::BuildEx( .. ), bvh not rebuildable." );
+	vertsEx = (bvhdbl3*)vertices; // note: we're not copying this data; don't delete.
 	idxCount = triCount = primCount;
 	// reset node pool
 	unsigned newNodePtr = 2;
@@ -1196,10 +1196,10 @@ void BVH::BuildHQ( const bvhvec4* vertices, const unsigned primCount )
 		allocatedBVHNodes = spaceNeeded;
 		memset( &bvhNode[1], 0, 32 );	// node 1 remains unused, for cache line alignment.
 		triIdx = (unsigned*)AlignedAlloc( (primCount + slack) * sizeof( unsigned ) );
-		verts = (bvhvec4*)vertices;		// note: we're not copying this data; don't delete.
 		fragment = (Fragment*)AlignedAlloc( (primCount + slack) * sizeof( Fragment ) );
 	}
 	else FATAL_ERROR_IF( !rebuildable, "BVH::BuildHQ( .. ), bvh not rebuildable." );
+	verts = (bvhvec4*)vertices; // note: we're not copying this data; don't delete.
 	idxCount = primCount + slack;
 	triCount = primCount;
 	unsigned* triIdxA = triIdx, * triIdxB = new unsigned[triCount + slack];
@@ -3058,7 +3058,6 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned primCount )
 		AlignedFree( bvhNode );
 		AlignedFree( triIdx );
 		AlignedFree( fragment );
-		verts = (bvhvec4*)vertices;
 		triIdx = (unsigned*)AlignedAlloc( primCount * sizeof( unsigned ) );
 		bvhNode = (BVHNode*)AlignedAlloc( spaceNeeded * sizeof( BVHNode ) );
 		allocatedBVHNodes = spaceNeeded;
@@ -3066,6 +3065,7 @@ void BVH::BuildAVX( const bvhvec4* vertices, const unsigned primCount )
 		fragment = (Fragment*)AlignedAlloc( primCount * sizeof( Fragment ) );
 	}
 	else FATAL_ERROR_IF( !rebuildable, "BVH::BuildAVX( .. ), bvh not rebuildable." );
+	verts = (bvhvec4*)vertices; // note: we're not copying this data; don't delete.
 	triCount = idxCount = primCount;
 	unsigned newNodePtr = 2;
 	struct FragSSE { __m128 bmin4, bmax4; };
@@ -4137,7 +4137,6 @@ void BVH::BuildNEON( const bvhvec4* vertices, const unsigned primCount )
 		AlignedFree( bvhNode );
 		AlignedFree( triIdx );
 		AlignedFree( fragment );
-		verts = (bvhvec4*)vertices;
 		triIdx = (unsigned*)AlignedAlloc( primCount * sizeof( unsigned ) );
 		bvhNode = (BVHNode*)AlignedAlloc( spaceNeeded * sizeof( BVHNode ) );
 		allocatedBVHNodes = spaceNeeded;
@@ -4145,6 +4144,7 @@ void BVH::BuildNEON( const bvhvec4* vertices, const unsigned primCount )
 		fragment = (Fragment*)AlignedAlloc( primCount * sizeof( Fragment ) );
 	}
 	else FATAL_ERROR_IF( !rebuildable, "BVH::BuildNEON( .. ), bvh not rebuildable." );
+	verts = (bvhvec4*)vertices; // note: we're not copying this data; don't delete.
 	triCount = idxCount = primCount;
 	unsigned newNodePtr = 2;
 	struct FragSSE { float32x4_t bmin4, bmax4; };
