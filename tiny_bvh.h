@@ -610,6 +610,14 @@ public:
 		float cost = 3.0f * n.SurfaceArea() + SAHCost( n.leftFirst ) + SAHCost( n.leftFirst + 1 );
 		return nodeIdx == 0 ? (cost / n.SurfaceArea()) : cost;
 	}
+	double SAHCostEx( const unsigned nodeIdx = 0 ) const
+	{
+		// Determine the SAH cost of a double-precision tree.
+		const BVHNodeEx& n = bvhNodeEx[nodeIdx];
+		if (n.isLeaf()) return 2.0f * n.SurfaceArea() * n.triCount;
+		double cost = 3.0f * n.SurfaceArea() + SAHCostEx( n.leftFirst ) + SAHCostEx( n.leftFirst + 1 );
+		return nodeIdx == 0 ? (cost / n.SurfaceArea()) : cost;
+	}
 	int NodeCount( const BVHLayout layout ) const;
 	int PrimCount( const unsigned nodeIdx = 0 ) const
 	{

@@ -324,7 +324,7 @@ int main()
 #ifdef BUILD_DOUBLE
 
 	// measure single-core bvh construction time - double-precision builder
-	printf( "- double-precision builder: " );
+	printf( "- 'double' builder:  " );
 	t.reset();
 	tinybvh::bvhdbl3* triEx = (tinybvh::bvhdbl3*)tinybvh::malloc64( verts * 3 * sizeof( tinybvh::bvhdbl3 ) );
 	for( int i = 0; i < verts; i++ ) 
@@ -334,7 +334,7 @@ int main()
 	bvh.BuildEx( triEx, verts / 3 );
 	buildTime = t.elapsed();
 	printf( "%7.2fms for %7i triangles ", buildTime * 1000.0f, verts / 3 );
-	printf( "- %6i nodes\n", bvh.usedBVHExNodes );
+	printf( "- %6i nodes, SAH=%.2f\n", bvh.usedBVHExNodes, bvh.SAHCostEx() );
 
 #endif
 
