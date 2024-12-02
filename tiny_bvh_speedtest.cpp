@@ -13,7 +13,7 @@
 #define ENABLE_OPENCL
 
 // tests to perform
-#define BUILD_MIDPOINT
+// #define BUILD_MIDPOINT
 #define BUILD_REFERENCE
 #define BUILD_DOUBLE
 #define BUILD_AVX
@@ -135,6 +135,8 @@ float TestPrimaryRays( BVH::BVHLayout layout, Ray* batch, unsigned N, unsigned p
 	return t.elapsed() / passes;
 }
 
+#ifdef DOUBLE_PRECISION_SUPPORT
+
 float TestPrimaryRaysEx( BVH::BVHLayout layout, RayEx* batch, unsigned N, unsigned passes )
 {
 	// Primary rays: coherent batch of rays from a pinhole camera.
@@ -148,6 +150,20 @@ float TestPrimaryRaysEx( BVH::BVHLayout layout, RayEx* batch, unsigned N, unsign
 	}
 	return steps == 0 ? 0 : (t.elapsed() / passes);
 }
+
+void ValidateTraceResultEx( RayEx* batch, float* ref, unsigned N, unsigned line )
+{
+	float refSum = 0;
+	double batchSum = 0;
+	for (unsigned i = 0; i < N; i += 4)
+		refSum += ref[i] == 1e30f ? 100 : ref[i],
+		batchSum += batch[i].t == 1e300 ? 100 : batch[i].t;
+	if (fabs( refSum - (float)batchSum ) / refSum < 0.0001f) return;
+	fprintf( stderr, "Validation failed on line %i.\n", line );
+	exit( 1 );
+}
+
+#endif
 
 float TestShadowRays( BVH::BVHLayout layout, Ray* batch, unsigned N, unsigned passes )
 {
@@ -201,18 +217,6 @@ void ValidateTraceResult( Ray* batch, float* ref, unsigned N, unsigned line )
 		s.close();
 		exit( 1 );
 	}
-}
-
-void ValidateTraceResultEx( RayEx* batch, float* ref, unsigned N, unsigned line )
-{
-	float refSum = 0;
-	double batchSum = 0;
-	for (unsigned i = 0; i < N; i += 4)
-		refSum += ref[i] == 1e30f ? 100 : ref[i],
-		batchSum += batch[i].t == 1e300 ? 100 : batch[i].t;
-	if (fabs( refSum - (float)batchSum ) / refSum < 0.0001f) return;
-	fprintf( stderr, "Validation failed on line %i.\n", line );
-	exit( 1 );
 }
 
 int main()
@@ -297,7 +301,9 @@ int main()
 	int Nfull = 0, Nsmall = 0;
 	Ray* fullBatch = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
 	Ray* smallBatch = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 2 * sizeof( Ray ) );
+#ifdef DOUBLE_PRECISION_SUPPORT
 	RayEx* doubleBatch = (RayEx*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 2 * sizeof( RayEx ) );
+#endif
 	for (int ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
@@ -313,9 +319,12 @@ int main()
 				if ((s & 7) == 0) 
 				{
 					smallBatch[Nsmall] = fullBatch[Nfull - 1];
+				#ifdef DOUBLE_PRECISION_SUPPORT
 					tinybvh::bvhdbl3 O = smallBatch[Nsmall].O;
 					tinybvh::bvhdbl3 D = smallBatch[Nsmall].D;
-					doubleBatch[Nsmall++] = RayEx( O, D );
+					doubleBatch[Nsmall] = RayEx( O, D );
+				#endif
+					Nsmall++;
 				}
 			}
 		}
@@ -354,7 +363,7 @@ int main()
 
 #endif
 
-#ifdef BUILD_DOUBLE
+#if defined BUILD_DOUBLE && defined DOUBLE_PRECISION_SUPPORT
 
 	// measure single-core bvh construction time - double-precision builder
 	printf( "- 'double' builder:  " );
@@ -519,7 +528,7 @@ int main()
 
 #endif
 
-#if defined TRAVERSE_2WAY_DBL && defined BUILD_DOUBLE
+#if defined TRAVERSE_2WAY_DBL && defined BUILD_DOUBLE && defined DOUBLE_PRECISION_SUPPORT
 
 	// double-precision Rays/BVH
 	printf( "- WALD_DOUBLE - primary: " );
