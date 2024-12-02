@@ -147,6 +147,10 @@ float TestShadowRays( BVH::BVHLayout layout, Ray* batch, unsigned N, unsigned pa
 		occluded = 0;
 		for (unsigned i = 0; i < N; i++) occluded += bvh.IsOccluded( batch[i], layout ) ? 1 : 0;
 	}
+	// Shadow ray validation: The compacted triangle format used by some intersection
+	// kernels will lead to some diverging results. We check if no more than about
+	// 1/1000 checks differ. Shadow rays also use an origin offset, based on scene
+	// extend, to account for limited floating point accuracy.
 	if (abs( (int)occluded - (int)refOccluded) > 500) // allow some slack, we're using various tri intersectors
 	{
 		fprintf( stderr, "\nValidation for shadow rays failed (%i != %i).\n", (int)occluded, (int)refOccluded );
