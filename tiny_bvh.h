@@ -632,7 +632,7 @@ public:
 	void SplitLeafs( const unsigned maxPrims = 1 ); // operates on VERBOSE layout
 	void SplitBVH8Leaf( const unsigned nodeIdx, const unsigned maxPrims = 1 ); // operates on BVH8 layout
 	void MergeLeafs(); // operates on VERBOSE layout
-	void Optimize( const unsigned iterations, const bool convertBack = true ); // operates on VERBOSE
+	void Optimize( const unsigned iterations ); // operates on VERBOSE
 	void Refit( const BVHLayout layout = WALD_32BYTE, const unsigned nodeIdx = 0 );
 	int Intersect( Ray& ray, const BVHLayout layout = WALD_32BYTE ) const;
 	// IntersectTLAS: Interface is under construction. Current plan:
@@ -1421,7 +1421,7 @@ void BVH::BuildHQ( const bvhvec4* vertices, const unsigned primCount )
 }
 
 // Convert: Change the BVH layout from one format into another.
-void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool deleteOriginal )
+void BVH::Convert( const BVHLayout from, const BVHLayout to, const bool /* deleteOriginal */ )
 {
 	if (from == WALD_32BYTE && to == AILA_LAINE)
 	{
@@ -2354,7 +2354,7 @@ void BVH::MergeLeafs()
 
 // Optimizing a BVH: BVH must be in 'verbose' format.
 // Implements "Fast Insertion-Based Optimization of Bounding Volume Hierarchies",
-void BVH::Optimize( const unsigned iterations, const bool convertBack )
+void BVH::Optimize( const unsigned iterations )
 {
 	// Optimize by reinserting a random subtree.
 	// Suggested iteration count: ~1M for best results.
@@ -2437,7 +2437,7 @@ int BVH::Intersect( Ray& ray, const BVHLayout layout ) const
 	return 0;
 }
 
-void BVH::BatchIntersect( Ray* rayBatch, const unsigned N, const BVHLayout layout, const TraceDevice device ) const
+void BVH::BatchIntersect( Ray* rayBatch, const unsigned N, const BVHLayout layout, const TraceDevice /* device */ ) const
 {
 	for (unsigned i = 0; i < N; i++) Intersect( rayBatch[i], layout );
 }
@@ -2474,7 +2474,7 @@ bool BVH::IsOccluded( const Ray& ray, const BVHLayout layout ) const
 // A future implementation will exploit the batch to trace the rays faster.
 // BatchIsOccluded returns the hits as a bit array in result:
 // Each unsigned integer in this array stores 32 hits.
-void BVH::BatchIsOccluded( Ray* rayBatch, const unsigned N, unsigned* result, const BVHLayout layout, const TraceDevice device ) const
+void BVH::BatchIsOccluded( Ray* rayBatch, const unsigned N, unsigned* result, const BVHLayout layout, const TraceDevice /* device */ ) const
 {
 	unsigned words = (N + 31 /* round up */) / 32;
 	memset( result, 0, words * 4 );
@@ -2607,10 +2607,9 @@ int BVH::Intersect_AilaLaine( Ray& ray ) const
 bool BVH::IsOccluded_AilaLaine( const Ray& ray ) const
 {
 	BVHNodeAlt* node = &altNode[0], * stack[64];
-	unsigned stackPtr = 0, steps = 0;
+	unsigned stackPtr = 0;
 	while (1)
 	{
-		steps++;
 		if (node->isLeaf())
 		{
 			for (unsigned i = 0; i < node->triCount; i++)
@@ -2661,7 +2660,7 @@ bool BVH::IsOccluded_AilaLaine( const Ray& ray ) const
 			if (dist2 != BVH_FAR) stack[stackPtr++] = altNode + ridx;
 		}
 	}
-	return steps;
+	return false;
 }
 
 // Intersect_BasicBVH4. For testing the converted data only; not efficient.
@@ -3396,7 +3395,6 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 	const __m128 Ox4 = _mm_set1_ps( ray.O.x ), rDx4 = _mm_set1_ps( ray.rD.x );
 	const __m128 Oy4 = _mm_set1_ps( ray.O.y ), rDy4 = _mm_set1_ps( ray.rD.y );
 	const __m128 Oz4 = _mm_set1_ps( ray.O.z ), rDz4 = _mm_set1_ps( ray.rD.z );
-	// const __m128 inf4 = _mm_set1_ps( BVH_FAR );
 	while (1)
 	{
 		steps++;
@@ -3482,14 +3480,12 @@ int BVH::Intersect_AltSoA( Ray& ray ) const
 bool BVH::IsOccluded_AltSoA( const Ray& ray ) const
 {
 	BVHNodeAlt2* node = &alt2Node[0], * stack[64];
-	unsigned stackPtr = 0, steps = 0;
+	unsigned stackPtr = 0;
 	const __m128 Ox4 = _mm_set1_ps( ray.O.x ), rDx4 = _mm_set1_ps( ray.rD.x );
 	const __m128 Oy4 = _mm_set1_ps( ray.O.y ), rDy4 = _mm_set1_ps( ray.rD.y );
 	const __m128 Oz4 = _mm_set1_ps( ray.O.z ), rDz4 = _mm_set1_ps( ray.rD.z );
-	// const __m128 inf4 = _mm_set1_ps( BVH_FAR );
 	while (1)
 	{
-		steps++;
 		if (node->isLeaf())
 		{
 			for (unsigned i = 0; i < node->triCount; i++)
@@ -3564,7 +3560,7 @@ bool BVH::IsOccluded_AltSoA( const Ray& ray ) const
 			if (dist2 != BVH_FAR) stack[stackPtr++] = alt2Node + ridx;
 		}
 	}
-	return steps;
+	return false;
 }
 
 // Intersect_CWBVH:
@@ -3929,6 +3925,10 @@ inline bool OccludedCompactTri( const Ray& r, const float* T )
 	const float v = T[4] * wr.x + T[5] * wr.y + T[6] * wr.z + T[7];
 	return u >= 0 && v >= 0 && u + v < 1;
 }
+#ifdef __GNUC__
+#pragma GCC push_options
+#pragma GCC optimize ("-O1") // TODO: I must be doing something wrong, figure out what.
+#endif
 bool BVH::IsOccluded_Afra( const Ray& ray ) const
 {
 	unsigned nodeIdx = 0, stack[1024], stackPtr = 0;
@@ -4075,6 +4075,9 @@ bool BVH::IsOccluded_Afra( const Ray& ray ) const
 	}
 	return false;
 }
+#ifdef __GNUC__
+#pragma GCC pop_options
+#endif
 
 #endif // BVH_USEAVX
 
