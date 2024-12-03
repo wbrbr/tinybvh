@@ -1,9 +1,6 @@
 #ifndef FENSTER_H
 #define FENSTER_H
 
-#define SCRWIDTH 800
-#define SCRHEIGHT 600
-
 #if defined(__APPLE__)
 #include <CoreGraphics/CoreGraphics.h>
 #include <objc/NSObjCRuntime.h>
@@ -21,6 +18,19 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <chrono>
+
+struct Timer
+{
+	Timer() { reset(); }
+	float elapsed() const
+	{
+		std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
+		std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - start);
+		return (float)time_span.count();
+	}
+	void reset() { start = std::chrono::high_resolution_clock::now(); }
+	std::chrono::high_resolution_clock::time_point start;
+};
 
 struct fenster {
   const char *title;
@@ -44,18 +54,10 @@ struct fenster {
 #endif
 };
 
-struct Timer
-{
-	Timer() { reset(); }
-	float elapsed() const
-	{
-		std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-		std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - start);
-		return (float)time_span.count();
-	}
-	void reset() { start = std::chrono::high_resolution_clock::now(); }
-	std::chrono::high_resolution_clock::time_point start;
-};
+// forward-declare these methods which we will implement in our own code.
+void Init();
+void Tick(float delta_time_s, fenster& f, uint32_t* buf);
+void Shutdown();
 
 #ifndef FENSTER_API
 #define FENSTER_API extern
@@ -386,34 +388,40 @@ public:
 
 #endif /* !FENSTER_HEADER */
 
-void Init();
-void Tick( uint32_t* buf );
-void Shutdown();
-int run() 
+#ifdef FENSTER_APP_IMPLEMENTATION
+
+// application entry point and message loop implementation.
+int run()
 {
 	uint32_t* buf = new uint32_t[SCRWIDTH * SCRHEIGHT];
 	struct fenster f = { .title = "tiny_bvh", .width = SCRWIDTH, .height = SCRHEIGHT, .buf = buf, };
-	fenster_open( &f );
+	
+	fenster_open(&f);
+	Timer t;
 	Init();
-	while (fenster_loop( &f ) == 0) 
-	{
-		Tick( buf );
+	t.reset();
+	while (fenster_loop(&f) == 0) {
+		float elapsed = t.elapsed();
+		t.reset();
+		Tick(elapsed, f, buf);
 		if (f.keys[27]) break;
 	}
 	Shutdown();
-	fenster_close( &f );
-	delete [] buf;
+	fenster_close(&f);
+	delete[] buf;
 	return 0;
 }
 
 #if defined(_WIN32)
-int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
-	int nCmdShow ) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
+	int nCmdShow) {
 	(void)hInstance, (void)hPrevInstance, (void)pCmdLine, (void)nCmdShow;
 	return run();
 }
 #else
 int main() { return run(); }
 #endif
+
+#endif /* FENSTER_APP_IMPLEMENTATION */
 
 #endif /* FENSTER_H */

@@ -1,6 +1,10 @@
+#define FENSTER_APP_IMPLEMENTATION
+#define SCRWIDTH 800
+#define SCRHEIGHT 600
 #include "external/fenster.h" // https://github.com/zserge/fenster
 
 // #define USE_EMBREE // enable to verify correct implementation, win64 only for now.
+#define TEST_DOUBLE // enable to verify correct implementation of double-precision path.
 #define LOADSCENE
 
 #define TINYBVH_IMPLEMENTATION
@@ -22,6 +26,7 @@ BVH bvh;
 
 #ifdef LOADSCENE
 bvhvec4* triangles = 0;
+bvhdbl3* triEx = 0;
 const char scene[] = "cryteksponza.bin";
 #else
 ALIGNED( 16 ) bvhvec4 triangles[259 /* level 3 */ * 6 * 2 * 49 * 3]{};
@@ -64,17 +69,9 @@ void Init()
 {
 #ifdef LOADSCENE
 	// load raw vertex data for Crytek's Sponza
-	std::string filename{ "../testdata/" };
+	std::string filename{ "./testdata/" };
 	filename += scene;
 	std::fstream s{ filename, s.binary | s.in };
-	if (!s.is_open())
-	{
-		// try again, look in .\testdata
-		std::string filename{ "./testdata/" };
-		filename += scene;
-		s = std::fstream{ filename, s.binary | s.in };
-		assert( s.is_open() );
-	}
 	s.seekp( 0 );
 	s.read( (char*)&verts, 4 );
 	printf( "Loading triangle data (%i tris).\n", verts );
@@ -104,17 +101,24 @@ void Init()
 	rtcReleaseGeometry( embreeGeom );
 	rtcCommitScene( embreeScene );
 
+#elif defined TEST_DOUBLE
+
+	triEx = (tinybvh::bvhdbl3*)malloc64( verts * sizeof(  tinybvh::bvhdbl3 ));
+	for( int i = 0; i < verts; i++ ) 
+		triEx[i].x = (double)triangles[i].x,
+		triEx[i].y = (double)triangles[i].y,
+		triEx[i].z = (double)triangles[i].z;
+	bvh.BuildEx( triEx, verts / 3 );
+
 #else
 
 	// build a BVH over the scene
 #if defined(BVH_USEAVX)
-	bvh.BuildHQ( triangles, verts / 3 );
-	bvh.Convert( BVH::WALD_32BYTE, BVH::BASIC_BVH4 );
-	bvh.Convert( BVH::BASIC_BVH4, BVH::BVH4_AFRA );
+	bvh.BuildAVX( triangles, verts / 3 );
 #elif defined(BVH_USENEON)
 	bvh.BuildNEON( triangles, verts / 3 );
 #else
-	// bvh.Build( triangles, verts / 3 );
+	bvh.Build( triangles, verts / 3 );
 #endif
 
 #endif
@@ -128,30 +132,33 @@ void Init()
 	t.close();
 }
 
-void UpdateCamera()
+
+void UpdateCamera(float delta_time_s, fenster& f)
 {
 	bvhvec3 right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
 	bvhvec3 up = 0.8f * cross( view, right );
-#ifdef _WIN32
-	// on windows, we get camera controls.
-	if (GetAsyncKeyState( 'A' )) eye += right * -1.0f;
-	if (GetAsyncKeyState( 'D' )) eye += right;
-	if (GetAsyncKeyState( 'W' )) eye += view;
-	if (GetAsyncKeyState( 'S' )) eye += view * -1.0f;
-	if (GetAsyncKeyState( 'R' )) eye += up;
-	if (GetAsyncKeyState( 'F' )) eye += up * -1.0f;
+	int64_t new_fenster_time = fenster_time();
+
+	// get camera controls.
+
+	if (f.keys['A']) eye += right * -1.0f * delta_time_s * 10;
+	if (f.keys['D']) eye += right * delta_time_s * 10;
+	if (f.keys['W']) eye += view * delta_time_s * 10;
+	if (f.keys['S']) eye += view * -1.0f * delta_time_s * 10;
+	if (f.keys['R']) eye += up * delta_time_s * 10;
+	if (f.keys['F']) eye += up * -1.0f * delta_time_s * 10;
+
 	// recalculate right, up
 	right = normalize( cross( bvhvec3( 0, 1, 0 ), view ) );
 	up = 0.8f * cross( view, right );
-#endif
 	bvhvec3 C = eye + 2 * view;
 	p1 = C - right + up, p2 = C + right + up, p3 = C - right - up;
 }
 
-void Tick( uint32_t* buf )
+void Tick(float delta_time_s, fenster & f, uint32_t* buf)
 {
-	// handle user input (windows only) and update camera
-	UpdateCamera();
+	// handle user input and update camera
+	UpdateCamera(delta_time_s, f);
 
 	// clear the screen with a debug-friendly color
 	for (int i = 0; i < SCRWIDTH * SCRHEIGHT; i++) buf[i] = 0xff00ff;
@@ -160,6 +167,7 @@ void Tick( uint32_t* buf )
 	// organized in 4x4 pixel tiles, 16 samples per pixel, so 256 rays per tile.
 	int N = 0;
 	Ray* rays = (Ray*)tinybvh::malloc64( SCRWIDTH * SCRHEIGHT * 16 * sizeof( Ray ) );
+	int * depths = (int *)tinybvh::malloc64(SCRWIDTH * SCRHEIGHT * sizeof (int));
 	for (int ty = 0; ty < SCRHEIGHT; ty += 4) for (int tx = 0; tx < SCRWIDTH; tx += 4 )
 	{
 		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++)
@@ -171,8 +179,14 @@ void Tick( uint32_t* buf )
 	}
 
 	// trace primary rays
-#if !defined USE_EMBREE
-	for (int i = 0; i < N; i++) bvh.Intersect( rays[i], BVH::BVH4_AFRA );
+#if defined TEST_DOUBLE
+	for (int i = 0; i < N; i++)
+	{
+		RayEx r( rays[i].O, rays[i].D );
+		depths[i] = bvh.IntersectEx( r ) & 127; 
+	}
+#elif !defined USE_EMBREE
+	for (int i = 0; i < N; i++) depths[i] = bvh.Intersect( rays[i] );
 #else
 	struct RTCRayHit rayhit;
 	for (int i = 0; i < N; i++)
@@ -191,7 +205,7 @@ void Tick( uint32_t* buf )
 	const bvhvec3 L = normalize( bvhvec3( 1, 2, 3 ) );
 	for (int i = 0, ty = 0; ty < SCRHEIGHT / 4; ty++) for (int tx = 0; tx < SCRWIDTH / 4; tx++)
 	{
-		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++, i++) if (rays[i].hit.t < 10000)
+		for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++, i++) // if (rays[i].hit.t < 10000)
 		{
 			int pixel_x = tx * 4 + x, pixel_y = ty * 4 + y, primIdx = rays[i].hit.prim;
 			bvhvec3 v0 = triangles[primIdx * 3 + 0];
@@ -199,7 +213,9 @@ void Tick( uint32_t* buf )
 			bvhvec3 v2 = triangles[primIdx * 3 + 2];
 			bvhvec3 N = normalize( cross( v1 - v0, v2 - v0 ) );
 			int c = (int)(255.9f * fabs( dot( N, L ) ));
-			buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
+			// buf[pixel_x + pixel_y * SCRWIDTH] = c + (c << 8) + (c << 16);
+			// buf[pixel_x + pixel_y * SCRWIDTH] = (primIdx * 0xdeece66d + 0xb) & 0xFFFFFF; // color is hashed primitive index
+			buf[pixel_x + pixel_y * SCRWIDTH] = depths[i] << 17; // render depth as red
 		}
 	}
 	tinybvh::free64( rays );
