@@ -1,6 +1,3 @@
-# dev
-This is the **development branch** for tinybvh. New features will be tested and finetuned here first, so main stays stable.
-
 # tinybvh
 Single-header BVH construction and traversal library written as "Sane C++" (or "C with classes"). The library has no dependencies. 
 
@@ -19,16 +16,22 @@ Note that the ````tiny_bvh.h```` library will work without ````tiny_ocl.h```` an
 # BVH?
 A Bounding Volume Hierarchy is a data structure used to quickly find intersections in a virtual scene; most commonly between a ray and a group of triangles. You can read more about this in a series of articles on the subject: https://jacco.ompf2.com/2022/04/13/how-to-build-a-bvh-part-1-basics .
 
-Right now tiny_bvh comes with four builders:
+Right now tiny_bvh comes with the following builders:
 * ````BVH::Build```` : Efficient plain-C/C+ binned SAH BVH builder which should run on any platform.
 * ````BVH::BuildAVX```` : A highly optimized version of BVH::Build for Intel CPUs.
 * ````BVH::BuildNEON```` : An optimized version of BVH::Build for ARM/NEON.
 * ````BVH::BuildHQ```` : A 'spatial splits' BVH builder, for highest BVH quality.
 
-A constructed BVH can be used to quickly intersect a ray with the geometry, using ````BVH::Intersect```` or ````BVH::IsOccluded````, for shadow rays.
+Several special-purpose builders are also available:
+* ````BVH::BuildQuick```` : Simple mid-point split BVH builder. For reference only.
+* ````BVH::BuildEx```` : Double-precision version of ````BVH::Build````. Takes ````bvhdbl3```` vertices as input.
+* ````BVH::BuildTLAS```` : Builds a BVH over an array of ````bvhaabb````s or ````BVHInstance````s.
+
+A constructed BVH can be used to quickly intersect a ray with the geometry, using ````BVH::Intersect```` or ````BVH::IsOccluded````, for shadow rays. The double-precision BVH is traversed using ````BVH::IntersectEx````.
 
 The constructed BVH will have a layout suitable for construction ('````WALD_32BYTE````'). Several other layouts for the same data are available, which all serve one or more specific purposes. You can convert between layouts using ````BVH::Convert````. The available layouts are:
 * ````BVH::WALD_32BYTE```` : A compact format that stores the AABB for a node, along with child pointers and leaf information in a cross-platform-friendly way. The 32-byte size allows for cache-line alignment.
+* ````BVH::WALD_DOUBLE```` : Double-precision version of ````BVH::WALD_32BYTE````.
 * ````BVH::VERBOSE```` : A format designed for modifying BVHs, e.g. for post-build optimizations using ````BVH::Optimize()````.
 * ````BVH::AILA_LAINE```` : This format uses 64 bytes per node and stores the AABBs of the two child nodes. This is the format presented in the [2009 Aila & Laine paper](https://research.nvidia.com/sites/default/files/pubs/2009-08_Understanding-the-Efficiency/aila2009hpg_paper.pdf) and recommended for basic GPU ray tracing.
 * ````BVH::BASIC_BVH4```` : In this format, each node stores four child pointers, reducing the depth of the tree. This improves performance for divergent rays. Based on the [2008 paper](https://graphics.stanford.edu/~boulos/papers/multi_rt08.pdf) by Ingo Wald et al.
@@ -58,11 +61,12 @@ The **performance measurement tool** uses OpenMP and can be compiled with:
 
 ````g++ -std=c++20 -mavx -Ofast -fopenmp tiny_bvh_speedtest.cpp -o tiny_bvh_speedtest````
 
-# Version 1.0.0
+# Version 1.0.5
 This version of the library includes the following functionality:
 * Binned SAH BVH builder
 * Fast binned SAH BVH builder using AVX intrinsics
 * Fast binned SAH BVH builder using NEON intrinsices, by [wuyakuma](https://github.com/wuyakuma)
+* Double-precision binned SAH BVH builder
 * Spatial Splits ([SBVH](https://www.nvidia.in/docs/IO/77714/sbvh.pdf), Stich et al., 2009) builder
 * 'Compressed Wide BVH' (CWBVH) data structure
 * BVH optimizer: reduces SAH cost and improves ray tracing performance ([Bittner et al., 2013](https://www.nvidia.in/docs/IO/77714/sbvh.pdf))
@@ -79,22 +83,20 @@ The current version of the library is rapidly gaining functionality. Please expe
 
 Plans, ordered by priority:
 
+* TLAS/BLAS traversal with BLAS transforms
 * Documentation:
   * Wiki
   * Article on architecture and intended use
 * Example renderers:
   * CPU WHitted-style ray tracer
-  * GPU path tracer
-  * GPU wavefront path tracer
-* TLAS/BLAS traversal with BLAS transforms
-  * Part of this: Build BVH over list of AABBs rather than tris
+  * CPU and GPU path tracer
+  * CPU and GPU wavefront path tracer
 * BVH::Optimize:
-  * Properly use C_trav and C_int for SAH **_(done)_**
   * Faster Optimize algorithm (complete paper implementation)
   * Understanding optimized SBVH performance
 * CPU single-ray performance
-  * Experiment with 4-wide layouts
   * Reverse-engineer Embree & PhysX
+  * Implement Fuetterling et al.'s 2017 paper
   
 These features have already been completed but need polishing and adapting to the interface, once it is settled. CWBVH GPU traversal combined with an optimized SBVH provides state-of-the-art **#RTXOff** performance; expect _billions of rays per second_.
 
