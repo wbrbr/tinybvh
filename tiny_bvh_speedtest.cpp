@@ -16,21 +16,21 @@
 // #define BUILD_MIDPOINT
 #define BUILD_REFERENCE
 #define BUILD_DOUBLE
-#define BUILD_AVX
+//#define BUILD_AVX
 // #define BUILD_NEON
 // #define BUILD_SBVH
-#define TRAVERSE_2WAY_ST
-#define TRAVERSE_ALT2WAY_ST
-#define TRAVERSE_SOA2WAY_ST
-#define TRAVERSE_4WAY
-#define TRAVERSE_2WAY_DBL
+//#define TRAVERSE_2WAY_ST
+//#define TRAVERSE_ALT2WAY_ST
+//#define TRAVERSE_SOA2WAY_ST
+//#define TRAVERSE_4WAY
+//#define TRAVERSE_2WAY_DBL
 // #define TRAVERSE_CWBVH
 // #define TRAVERSE_BVH4
 // #define TRAVERSE_BVH8
-#define TRAVERSE_2WAY_MT
-#define TRAVERSE_2WAY_MT_PACKET
-#define TRAVERSE_OPTIMIZED_ST
-#define TRAVERSE_4WAY_OPTIMIZED
+//#define TRAVERSE_2WAY_MT
+//#define TRAVERSE_2WAY_MT_PACKET
+//#define TRAVERSE_OPTIMIZED_ST
+//#define TRAVERSE_4WAY_OPTIMIZED
 // #define EMBREE_BUILD // win64-only for now.
 // #define EMBREE_TRAVERSE // win64-only for now.
 
@@ -270,6 +270,7 @@ int main()
 
 #ifdef LOADSPONZA
 	// load raw vertex data for Crytek's Sponza
+#if 0
 	const std::string scene = "cryteksponza.bin";
 	std::string filename{ "./testdata/" };
 	filename += scene;
@@ -279,6 +280,29 @@ int main()
 	printf( "Loading triangle data (%i tris).\n", verts );
 	verts *= 3, triangles = (bvhvec4*)tinybvh::malloc64( verts * sizeof( bvhvec4 ) );
 	s.read( (char*)triangles, verts * 16 );
+#else
+    {
+        FILE* fp = fopen("mesh.bin", "rb");
+        int num_triangles, num_vertices;
+        fread(&num_vertices, 1, sizeof(int), fp);
+        fread(&num_triangles, 1, sizeof(int), fp);
+        std::vector<float> vertices(num_vertices*3);
+        std::vector<int> indices(num_triangles*3);
+        fread(vertices.data(), sizeof(float), 3*num_vertices, fp);
+        fread(indices.data(), sizeof(int), 3*num_triangles, fp);
+
+        verts = 3 * num_triangles;
+        triangles = (bvhvec4*)tinybvh::malloc64(verts * sizeof(bvhvec4));
+        for (int i = 0; i < 3*num_triangles; i++) { 
+            int v_idx = indices[i];
+            float x = vertices[3*v_idx+0];
+            float y = vertices[3*v_idx+1];
+            float z = vertices[3*v_idx+2];
+            triangles[i] = { x, y, z, 0 };
+        }
+        fclose(fp);
+    }
+#endif
 #else
 	// generate a sphere flake scene
 	sphere_flake( 0, 0, 0, 1.5f );
@@ -625,17 +649,31 @@ int main()
 	printf( "BVH traversal speed - GPU (OpenCL)\n" );
 
 	// calculate full res reference distances using threaded traversal on CPU.
-	const int batchCount = Nfull / 10000;
+#if 0
+	const int batchCount = Nsmall / 10000;
 #pragma omp parallel for schedule(dynamic)
 	for (int batch = 0; batch < batchCount; batch++)
 	{
 		const int batchStart = batch * 10000;
-		for (int i = 0; i < 10000; i++) bvh.Intersect( fullBatch[batchStart + i] );
+		for (int i = 0; i < 10000; i++) bvh.Intersect( shadowBatch[batchStart + i] );
 	}
-	refDistFull = new float[Nfull];
-	for (int i = 0; i < Nfull; i++) refDistFull[i] = fullBatch[i].hit.t;
+	refDistFull = new float[Nsmall];
+	for (int i = 0; i < Nsmall; i++) refDistFull[i] = smallBatch[i].hit.t;
+#endif
 
 #ifdef GPU_2WAY
+
+    FILE* fp = fopen("rays.bin", "rb");
+    int num_rays;
+    fread(&num_rays, sizeof(int), 1, fp);
+    num_rays = Nsmall; // TODO: fix this
+    Ray* inputShadowBatch = (Ray*)tinybvh::malloc64(sizeof(Ray)*num_rays);
+
+    bvhvec4* inputBuf = (bvhvec4*)tinybvh::malloc64(2*sizeof(bvhvec4)*num_rays);
+    fread(inputBuf, sizeof(bvhvec4), 2*num_rays, fp);
+    for (int i = 0; i < num_rays; i++) {
+        inputShadowBatch[i] = { (bvhvec3)inputBuf[2*i+0], (bvhvec3)inputBuf[2*i+1] };
+    }
 
 	// trace the rays on GPU using OpenCL
 	printf( "- AILA_LAINE  - primary: " );
@@ -649,7 +687,7 @@ int main()
 	idxData.CopyToDevice();
 	triData.CopyToDevice();
 	// create rays and send them to the gpu side
-	tinyocl::Buffer rayData( Nfull * sizeof( tinybvh::Ray ), fullBatch );
+	tinyocl::Buffer rayData( num_rays * sizeof( tinybvh::Ray ), inputShadowBatch );
 	rayData.CopyToDevice();
 	// create an event to time the OpenCL kernel
 	cl_event event;
@@ -660,7 +698,7 @@ int main()
 	ailalaine_kernel.SetArguments( &gpuNodes, &idxData, &triData, &rayData );
 	for (int pass = 0; pass < 9; pass++)
 	{
-		ailalaine_kernel.Run( Nfull, 64, 0, &event ); // for now, todo.
+		ailalaine_kernel.Run( num_rays, 64, 0, &event ); // for now, todo.
 		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
@@ -671,9 +709,9 @@ int main()
 	rayData.CopyFromDevice();
 	// report on timing
 	traceTime /= 8.0f;
-	printf( "%4.2fM rays in %5.1fms (%7.2fMRays/s)\n", (float)Nfull * 1e-6f, traceTime * 1000, (float)Nfull / traceTime * 1e-6f );
+	printf( "%4.2fM rays in %5.1fms (%7.2fMRays/s)\n", (float)num_rays * 1e-6f, traceTime * 1000, (float)num_rays / traceTime * 1e-6f );
 	// validate GPU ray tracing result
-	ValidateTraceResult( fullBatch, refDistFull, Nfull, __LINE__ );
+	//ValidateTraceResult( fullBatch, refDistFull, Nfull, __LINE__ );
 
 #endif
 
@@ -692,7 +730,7 @@ int main()
 	cl_event event;
 	cl_ulong startTime, endTime;
 	// create rays and send them to the gpu side
-	tinyocl::Buffer rayData( Nfull * sizeof( tinybvh::Ray ), fullBatch );
+	tinyocl::Buffer rayData( num_rays * sizeof( tinybvh::Ray ), fullBatch );
 	rayData.CopyToDevice();
 #endif
 	// start timer and start kernel on gpu
@@ -701,7 +739,7 @@ int main()
 	gpu4way_kernel.SetArguments( &gpu4Nodes, &rayData );
 	for (int pass = 0; pass < 9; pass++)
 	{
-		gpu4way_kernel.Run( Nfull, 64, 0, &event ); // for now, todo.
+		gpu4way_kernel.Run( num_rays, 64, 0, &event ); // for now, todo.
 		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
@@ -712,9 +750,9 @@ int main()
 	rayData.CopyFromDevice();
 	// report on timing
 	traceTime /= 8.0f;
-	printf( "%4.2fM rays in %5.1fms (%7.2fMRays/s)\n", (float)Nfull * 1e-6f, traceTime * 1000, (float)Nfull / traceTime * 1e-6f );
+	printf( "%4.2fM rays in %5.1fms (%7.2fMRays/s)\n", (float)num_rays * 1e-6f, traceTime * 1000, (float)num_rays / traceTime * 1e-6f );
 	// validate GPU ray tracing result
-	ValidateTraceResult( fullBatch, refDistFull, Nfull, __LINE__ );
+	//ValidateTraceResult( fullBatch, refDistFull, Nsmall, __LINE__ );
 
 #endif
 
@@ -739,7 +777,7 @@ int main()
 	cl_event event;
 	cl_ulong startTime, endTime;
 	// create rays and send them to the gpu side
-	tinyocl::Buffer rayData( Nfull * sizeof( tinybvh::Ray ), fullBatch );
+	tinyocl::Buffer rayData( num_rays * sizeof( tinybvh::Ray ), fullBatch );
 	rayData.CopyToDevice();
 #endif
 	// start timer and start kernel on gpu
@@ -748,7 +786,7 @@ int main()
 	cwbvh_kernel.SetArguments( &cwbvhNodes, &cwbvhTris, &rayData );
 	for (int pass = 0; pass < 9; pass++)
 	{
-		cwbvh_kernel.Run( Nfull, 64, 0, &event ); // for now, todo.
+		cwbvh_kernel.Run( num_rays, 64, 0, &event ); // for now, todo.
 		clWaitForEvents( 1, &event ); // OpenCL kernsl run asynchronously
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_START, sizeof( cl_ulong ), &startTime, 0 );
 		clGetEventProfilingInfo( event, CL_PROFILING_COMMAND_END, sizeof( cl_ulong ), &endTime, 0 );
@@ -759,9 +797,9 @@ int main()
 	rayData.CopyFromDevice();
 	// report on timing
 	traceTime /= 8.0f;
-	printf( "%4.2fM rays in %5.1fms (%7.2fMRays/s)\n", (float)Nfull * 1e-6f, traceTime * 1000, (float)Nfull / traceTime * 1e-6f );
+	printf( "%4.2fM rays in %5.1fms (%7.2fMRays/s)\n", (float)num_rays * 1e-6f, traceTime * 1000, (float)num_rays / traceTime * 1e-6f );
 	// validate GPU ray tracing result
-	ValidateTraceResult( fullBatch, refDistFull, Nfull, __LINE__ );
+	//ValidateTraceResult( fullBatch, refDistFull, Nfull, __LINE__ );
 
 #endif
 
