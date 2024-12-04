@@ -358,7 +358,7 @@ void FatalError( const char* fmt, ... )
 	va_start( args, fmt );
 	vsnprintf( t, sizeof( t ) - 2, fmt, args );
 	va_end( args );
-	fprintf( stderr, t );
+	fprintf( stderr, "%s", t );
 	while (1) exit( 0 );
 }
 
@@ -650,7 +650,7 @@ Kernel::Kernel( const char* file, const char* entryPoint )
 	// see if we have seen this source file before
 	for (int s = (int)loadedKernels.size(), i = 0; i < s; i++)
 	{
-		if (!_stricmp( file, loadedKernels[i]->sourceFile ))
+		if (!strcmp( file, loadedKernels[i]->sourceFile ))
 		{
 			cl_int error;
 			program = loadedKernels[i]->program;

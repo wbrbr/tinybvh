@@ -50,7 +50,7 @@ using namespace tinybvh;
 #ifdef _WIN32
 #include <intrin.h>		// for __cpuidex
 #elif defined ENABLE_OPENCL
-#undef ENABLE_OPENCL
+//#undef ENABLE_OPENCL
 #endif
 #if defined(__GNUC__) && defined(__x86_64__)
 #include <cpuid.h>
